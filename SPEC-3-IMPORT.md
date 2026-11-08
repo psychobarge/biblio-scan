@@ -1,105 +1,105 @@
-# BiblioScan — Spec 3 : import de photos depuis le téléphone (v0.4)
+# BiblioScan — Spec 3: importing photos from the phone
 
-Base : [SPEC.md](SPEC.md) (traitement, fiabilité) et [SPEC-2-UI.md](SPEC-2-UI.md) (écrans). Cette spec part de `main` après la fusion de la passe UI/UX (`e3670ef`).
+Base: [SPEC.md](SPEC.md) (processing, reliability) and [SPEC-2-UI.md](SPEC-2-UI.md) (screens).
 
-## État (branche `feat/photo-import`, 2026-11-08)
+## Status (merged in `main`, `108f86f`)
 
-Implémentée. Vérifié sur le Pixel 6 (GrapheneOS) :
-- ⋮ → Importer des photos ouvre le sélecteur système ; **aucune permission de stockage** n'est accordée à l'app ;
-- photos de galerie copiées en 1446×1920 (300 à 450 Ko au lieu d'environ 4 Mo), à l'endroit, puis traitées sans autre action.
+Implemented. Verified on Pixel 6 (GrapheneOS):
+- ⋮ → « Importer des photos » opens the system photo picker; **no storage permission** is granted to the app;
+- gallery photos are copied at 1446×1920 (300–450 KB instead of ≈ 4 MB), the right way up, then processed with no further action.
 
-17 tests unitaires verts (dont la taille cible et le filtre des noms de collection).
+Covered by unit tests: target size, collection names filtered from the query.
 
-Pas encore vérifié :
-- import de 20 à 50 photos d'un coup ;
-- app tuée pendant l'import ;
-- image corrompue ;
-- photo prise en paysage.
+Not verified yet:
+- importing 20 to 50 photos at once;
+- the app killed during an import;
+- a corrupt image;
+- a photo taken in landscape.
 
-Ajouts faits pendant l'essai réel :
-- la liste remonte en haut quand un nouveau livre arrive (avant, les livres importés restaient hors de vue) ;
-- correction de la mesure de taille du texte et filtre des noms de collection (voir SPEC §6).
+Added during the real-world test:
+- the list scrolls back to the top when a new book arrives (imported books used to stay out of view);
+- letter height measured along the line, and collection names filtered (SPEC §6).
 
-Ordre d'affichage : avec le tri « date d'ajout » (plus récent d'abord), la dernière photo du lot apparaît en premier.
+Display order: with the « date added » sort (newest first), the last photo of the batch comes first.
 
-## 1. Besoin
+## 1. Need
 
-Prendre une rafale de photos avec l'appareil photo du téléphone, sans ouvrir l'app, puis plus tard :
-**Bibliothèque → Importer des photos → sélection → traitement de toutes les photos**, sans autre action.
+Take a burst of photos with the phone's regular camera app, without opening BiblioScan, then later:
+**Library → import photos → select → every photo is processed**, with no further action.
 
-## 2. Décisions
+## 2. Decisions
 
-- ✅ **minSdk 26 → 28** (Android 9), pour utiliser `ImageDecoder`.
-- ✅ **Pas de recadrage** : les photos importées partent directement en OCR (voir §8 pour le test qui a conduit à ce choix).
-- ❌ « Partager vers BiblioScan » depuis la galerie : non nécessaire.
-- ⏸ Détection des doublons à l'import (empreinte SHA-256) : pas pour le moment. Le badge « doublon possible » existant suffit.
+- ✅ **minSdk 26 → 28** (Android 9), to use `ImageDecoder`.
+- ✅ **No crop**: imported photos go straight to OCR (§8 explains the test behind this choice).
+- ❌ "Share to BiblioScan" from the gallery: not needed.
+- ⏸ Duplicate detection at import (SHA-256 fingerprint): not for now. The existing « doublon possible » badge is enough.
 
-## 3. Parcours
+## 3. Journey
 
-1. Dans la Bibliothèque, l'entrée **« Importer des photos »** se trouve à deux endroits :
-   - dans le menu ⋮ ;
-   - comme second bouton de l'état vide, à côté de « Scanner un livre ».
-2. Le **sélecteur de photos Android** (Photo Picker) s'ouvre, **images uniquement**, en sélection multiple (jusqu'à la limite du système, en général 100).
-   - Aucune permission de stockage n'est demandée : seules les photos choisies sont lisibles par l'app.
-   - Il est intégré au système depuis Android 13, donc disponible sur GrapheneOS.
-3. Retour immédiat à la Bibliothèque, avec une Snackbar « Import de N photos… ».
-4. Chaque photo devient un livre `CAPTURED` dès qu'elle est copiée. Le bandeau « N livres en cours de traitement » et la liste se remplissent au fur et à mesure.
-5. À la fin : Snackbar **« N photos importées »**, ou « N photos importées, K illisibles » s'il y a eu des échecs.
-6. Ensuite, c'est le traitement habituel : OCR → recherche → Trouvé / À vérifier.
+1. The **« Importer des photos »** entry is in two places in the library:
+   - the ⋮ menu;
+   - the empty state, next to « Scanner un livre ».
+2. The **Android photo picker** opens: **images only**, multiple selection (up to the system limit, usually 100).
+   - No storage permission is requested: only the chosen photos are readable by the app.
+   - It is built into the system since Android 13, so it is available on GrapheneOS.
+3. Back to the library straight away, with a « Import de N photos… » Snackbar.
+4. Each photo becomes a `CAPTURED` book as soon as it is copied. The processing banner and the list fill in as it goes.
+5. At the end: Snackbar **« N photos importées »**, or « N photos importées, K illisibles » ("K unreadable") if some failed.
+6. Then the usual processing: OCR → lookup → « Trouvé » / « À vérifier ».
 
-## 4. Copie d'une photo importée
+The shooting tip is shown in the library's empty state: *the book should fill the photo, with no other book visible behind it*.
 
-Pour chaque URI sélectionnée, **dans l'ordre de la sélection**, de façon séquentielle et dans le scope applicatif (l'import continue si on quitte l'écran) :
+## 4. Copying an imported photo
 
-1. **Décoder** avec `ImageDecoder`, qui applique l'orientation EXIF, en **réduisant** à 1920 px maximum sur le grand côté. Une photo de galerie fait environ 4000×3000 et 4 Mo ; une photo prise dans l'app fait 1280×1920.
-2. **Ré-encoder** en JPEG (qualité 90) vers `covers/{uuid}.jpg.tmp`, puis **renommer** en `.jpg` : un fichier à moitié écrit n'est jamais vu comme une photo.
-3. **Insérer** la ligne `CAPTURED`, avec `createdAt` = heure de l'import + index pour garder l'ordre de la sélection.
-4. Mettre l'OCR en file toutes les 10 photos et à la fin, pour que le traitement démarre sans attendre la fin de l'import.
+For each selected URI, **in selection order**, one after the other, in the application scope (the copy goes on if the screen is left):
 
-Une photo illisible (fichier corrompu, format non supporté) est ignorée et comptée dans « K illisibles ». Elle ne bloque pas les autres.
+1. **Decode** with `ImageDecoder`, which applies the EXIF orientation, **downscaling** to 1920 px max on the long side (`Books.targetSize`: ratio kept, never upscaled). A gallery photo is ≈ 4000×3000 and 4 MB; an in-app photo is 1280×1920.
+2. **Re-encode** as JPEG (quality 90) to `covers/{uuid}.jpg.tmp`, then **rename** to `.jpg`. A half-written file is never mistaken for a photo, and leftover `.tmp` files are deleted at the next start.
+3. **Insert** the `CAPTURED` row, with `createdAt` = import time + index to keep the selection order.
+4. Queue OCR every 10 photos and at the end, so processing starts without waiting for the whole import.
 
-Conseil de prise de vue, à afficher une fois dans l'état vide ou la Snackbar : *le livre doit remplir la photo, sans autre livre visible derrière*.
+An unreadable photo (corrupt file, unsupported format) is skipped and counted in « K illisibles ». It doesn't block the others.
 
-## 5. Fiabilité
+## 5. Reliability
 
-- Mêmes invariants que la capture (SPEC §4) : la photo est sur le disque **avant** sa ligne, et la réconciliation au démarrage rattrape une photo sans ligne.
-- **Si l'app est tuée pendant l'import** : les photos déjà copiées sont sauves. Le reste n'est pas importé, puisque les URI du sélecteur ne sont valides que le temps de la session. L'utilisateur réimporte les photos manquantes.
-- Réimporter la même photo crée un second livre, signalé ensuite par le badge « doublon possible ».
-- Les photos de la galerie ne sont **jamais modifiées ni supprimées**.
-- Aucun changement de schéma de base de données.
+- Same invariants as capture (SPEC §4): the photo is on disk **before** its row, and startup reconciliation picks up a photo without a row.
+- **If the app is killed during an import**, the photos already copied are safe. The rest is not imported, since picker URIs only live for the session; the user imports the missing photos again.
+- Importing the same photo again creates a second book, later flagged « doublon possible ».
+- Gallery photos are **never modified or deleted**.
+- No database schema change.
 
-## 6. Technique
+## 6. Technical
 
-| Point | Choix |
+| Point | Choice |
 |---|---|
-| Sélection | `ActivityResultContracts.PickMultipleVisualMedia()` + `PickVisualMedia.ImageOnly` |
-| Décodage | `ImageDecoder` + `setTargetSize` (EXIF appliqué) ; minSdk 28 |
-| Import | `Books.importPhotos(ctx, uris): ImportResult(ok, failed)`, à côté de `onPhotoSaved` |
-| Test unitaire | calcul de la taille cible : réduction, ratio conservé, pas d'agrandissement des petites images |
+| Selection | `ActivityResultContracts.PickMultipleVisualMedia()` + `PickVisualMedia.ImageOnly` |
+| Decoding | `ImageDecoder` + `setTargetSize` (EXIF applied), software allocator; minSdk 28 |
+| Import | `Books.importPhotos(ctx, uris): ImportResult(ok, failed)`, next to `onPhotoSaved` |
+| Unit test | target size: downscaling, ratio kept, small images never upscaled |
 
-## 7. Hors périmètre
+## 7. Out of scope
 
-- **Tout recadrage** des photos importées, manuel ou automatique.
-- « Partager vers BiblioScan » depuis la galerie.
-- Détection des doublons à l'import.
-- Import de PDF ou de vidéos ; suppression des photos de la galerie.
+- **Any crop** of imported photos, manual or automatic.
+- "Share to BiblioScan" from the gallery.
+- Duplicate detection at import.
+- PDF or video import; deleting photos from the gallery.
 
-## 8. Test du recadrage automatique (2026-11-08) : abandonné
+## 8. Automatic crop test (2026-11-08): dropped
 
-- **Méthode** : détecteur d'objets ML Kit embarqué (sans les services Google), lancé sur le Pixel 6 avec **10 photos réelles** prises à l'appareil photo du téléphone (livre tenu en main), plus 6 photos prises dans l'app.
-- **Résultat** : sur les 10 photos réelles, le détecteur n'a **jamais** trouvé le livre. Il encadre un élément de l'illustration de la couverture (un flacon, une roue, une médaille, un personnage). La règle de décision aurait appliqué automatiquement 3 de ces cadres, ce qui aurait **coupé le titre et l'auteur**.
-- **Constat** : sur ces photos, le livre remplit déjà environ 85 % de l'image. Le reste est une main et un fond flou, sans texte parasite. Le recadrage n'apporte presque rien à l'OCR.
-- **À reconsidérer seulement si** des livres en arrière-plan provoquent des erreurs d'identification en pratique. Pistes alors :
-  - détection des bords (OpenCV, lourd) ;
-  - recadrage manuel avant OCR : un écran avec un cadre ajustable par 4 poignées et un bouton « Pivoter 90° », les photos importées attendant dans un statut `TO_CROP` jusqu'à validation.
+- **Method**: the bundled ML Kit object detector (no Google services), run on the Pixel 6 over **10 real photos** taken with the phone's camera app (book held in hand), plus 6 in-app photos.
+- **Result**: on the 10 real photos the detector **never** found the book. It boxed a detail of the cover illustration (a bottle, a wheel, a medal, a character). The decision rule would have applied 3 of those boxes automatically, **cutting off the title and author**.
+- **Finding**: on these photos the book already fills ≈ 85 % of the frame. The rest is a hand and a blurred background with no stray text, so cropping brings almost nothing to the OCR.
+- **Revisit only if** books in the background cause wrong matches in practice. Options then:
+  - edge detection (OpenCV, heavy);
+  - manual crop before OCR: a screen with a 4-handle adjustable frame and a « Pivoter 90° » button, imported photos waiting in a `TO_CROP` status until validated.
 
-## 9. Critères d'acceptation
+## 9. Acceptance criteria
 
-| Critère | Comment vérifier |
-|---|---|
-| 20 photos sélectionnées → 20 livres dans la liste, traités ensuite sans action | Pixel 6 |
-| Pas de permission de stockage demandée | Réglages de l'app → Autorisations |
-| Photo importée ≤ 1920 px, orientation correcte (photo prise en paysage incluse) | miniature + taille du fichier |
-| App tuée pendant l'import → aucune photo copiée perdue, aucun `.tmp` vu comme un livre | adb pendant un import de 50 photos |
-| Une image corrompue dans la sélection → les autres sont importées, message « 1 illisible » | manuel |
-| Les 12 tests existants restent verts + le nouveau test de taille cible | `./gradlew testDebugUnitTest` |
+| Check | How | State |
+|---|---|---|
+| 20 photos selected → 20 books in the list, then processed with no action | Pixel 6 | ⬜ (2 photos ✅) |
+| No storage permission requested | App settings → Permissions | ✅ |
+| Imported photo ≤ 1920 px, right orientation (landscape included) | thumbnail + file size | ✅ portrait, ⬜ landscape |
+| App killed during import → no copied photo lost, no `.tmp` seen as a book | adb during a 50-photo import | ⬜ |
+| One corrupt image in the selection → the others are imported, « 1 illisible » | manual | ⬜ |
+| Unit tests green, including target size | `./gradlew testDebugUnitTest` | ✅ |
