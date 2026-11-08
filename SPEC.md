@@ -1,200 +1,219 @@
-# Biblio Scan — Spec v0.1 (brouillon)
+# BiblioScan — Spec 1 (V1, telle que construite)
 
 App Android perso pour cataloguer sa bibliothèque en photographiant les couvertures.
 Priorités : **rapidité de capture** et **zéro perte d'enregistrement**.
 
+Cette spec décrit **le code actuel** (commit `f6e190e`, 2026-11-08). Les numéros de section sont cités dans les commentaires du code (« SPEC §5 ») : ne pas les renuméroter.
+Suite : [SPEC-2-UI.md](SPEC-2-UI.md) (passe UI/UX).
+
+## État d'avancement
+
+| Élément | État |
+|---|---|
+| Capture CameraX + cadre-guide | ✅ fait, testé sur Pixel 6 (GrapheneOS) |
+| Photo enregistrée avant sa ligne en base + réconciliation au démarrage | ✅ fait |
+| OCR ML Kit embarqué (sans Play Services) | ✅ fait, **vérifié sur GrapheneOS** |
+| Workers asynchrones OCR / recherche, 5 tentatives | ✅ fait |
+| Recherche Google Books → Open Library, bascule si une source échoue | ✅ fait |
+| Scoring + regroupement des éditions d'une même œuvre | ✅ fait, testé en unitaire |
+| Bibliothèque (filtres, doublons) / Fiche (candidats, édition, relance, suppression) | ✅ fait ; relance avec titre corrigé vérifiée sur un vrai livre |
+| Export/import ZIP, export CSV | ✅ fait ; ⚠️ **pas encore testé sur le téléphone** |
+| Signature release (`keystore.properties`) | 🟡 code prêt, keystore pas créé |
+| Clé Google Books (`local.properties`) | 🟡 code prêt, clé pas créée : l'app tourne sur Open Library seul |
+| Test de robustesse (mode avion, app tuée pendant le traitement) | ⬜ pas fait |
+| Mesure sur 30 livres (§12) | ⬜ pas faite |
+| Icône d'app, README, CI GitHub Actions, réduction de taille de l'APK (56 Mo en debug) | ⬜ pas fait |
+| Insets système (boutons sous la barre d'état), splash, navigation standard | ⬜ → **Spec 2** |
+
 ## 1. Périmètre
 
-### V1 (dans le périmètre)
-- Photo de couverture, cadrée par l'utilisateur à l'aide d'un cadre-guide à l'écran.
-- Enchaînement rapide des photos : le traitement ne bloque jamais la capture.
-- Traitement asynchrone : OCR sur le téléphone, puis recherche du livre sur une API gratuite.
-- Bibliothèque locale : liste, fiche livre, validation et correction des résultats douteux.
-- Export/import ZIP (photos + données) et export CSV.
-- Distribution par GitHub Releases (APK), pas de Play Store.
+### Dans la V1
+- Photo de couverture cadrée par l'utilisateur (pas de recadrage).
+- Enchaînement rapide des photos ; le traitement ne bloque jamais la capture.
+- Traitement asynchrone : OCR sur le téléphone, puis recherche sur des API gratuites.
+- Bibliothèque locale, fiche livre, validation et correction.
+- Export/import ZIP, export CSV. Distribution par GitHub, pas de Play Store.
 
-### Hors périmètre V1 (plus tard, peut-être)
-- Recadrage auto / correction de perspective.
-- Scan du code-barres ISBN.
-- Modèle de vision (VLM), local ou cloud.
-- Sync cloud, multi-appareils, étagères/tags, prêts.
+### Hors V1
+Recadrage auto, scan ISBN, modèle de vision (VLM), sync cloud, étagères/tags/prêts, écran de réglages, traduction de l'interface.
 
 ## 2. Stack
 
-| Besoin | Choix | Pourquoi |
+| Besoin | Choix | Version |
 |---|---|---|
-| UI | Kotlin + Jetpack Compose | standard actuel |
-| Caméra | CameraX (`ImageCapture`) | capture rapide, pas d'UI système |
-| OCR | ML Kit Text Recognition v2, **version bundled** (Latin) | 100 % sur le téléphone, modèle dans l'APK, pas de Play Services requis |
-| Stockage | Room (SQLite) + fichiers dans `filesDir/covers/` | source de vérité locale |
-| Asynchrone | WorkManager | survit à la fermeture de l'app, au redémarrage, à l'absence de réseau |
-| HTTP | OkHttp + kotlinx.serialization | léger |
-| Images | Coil | affichage des miniatures |
+| Langage / UI | Kotlin + Jetpack Compose, Material 3 (thème par défaut) | Kotlin 2.1.0, BOM 2024.12.01 |
+| Build | AGP 8.7.3, Gradle 8.11.1 (wrapper), **JDK 17 requis** | |
+| SDK | minSdk 26, target/compile 35 | |
+| Caméra | CameraX `ImageCapture` | 1.4.1 |
+| OCR | ML Kit Text Recognition v2 **bundled** (latin) | 16.0.1 |
+| Base | Room (schéma exporté dans `app/schemas/`) | 2.6.1 |
+| Asynchrone | WorkManager | 2.10.0 |
+| HTTP / JSON | OkHttp + kotlinx.serialization | 4.12.0 / 1.7.3 |
+| Images | Coil | 2.7.0 |
 
-minSdk proposé : 26.
+Pas de ViewModel ni de bibliothèque de navigation : les écrans lisent directement les `Flow` Room. La navigation est un simple état (`"capture"`, `"library"` ou l'id d'un livre) dans `MainActivity`.
 
-## 3. Parcours utilisateur
+## 3. Parcours utilisateur (actuel)
 
-1. **Écran Capture** (écran d'accueil) : aperçu caméra + cadre-guide au ratio d'un livre (~2:3).
-   - Tap sur le déclencheur → son/vibration → l'écran est prêt pour la photo suivante en **< 1 s**.
-   - Compteur « N en attente » affiché en surimpression.
-2. **Écran Bibliothèque** : liste avec miniature, titre, auteur et badge de statut.
-   Filtres : Tous / À vérifier / Erreurs.
-3. **Écran Fiche** : photo d'origine, champs titre/auteur/éditeur/année, candidats proposés.
-   Actions : choisir un candidat, éditer à la main, relancer la recherche avec un texte corrigé, supprimer.
+1. **Capture** (écran d'accueil, `CaptureScreen.kt`)
+   - Aperçu plein écran, cadre-guide blanc au ratio 2:3 (75 % de la hauteur), qui passe au vert tant qu'une photo s'écrit.
+   - Déclencheur rond en bas : vibration à l'appui, écran prêt pour la photo suivante sans attendre. Pas de son.
+   - Bouton « Bibliothèque · N en cours » **en haut à droite, superposé à l'aperçu** (il chevauche la barre d'état → Spec 2).
+   - Permission caméra demandée au premier lancement ; si elle est refusée, un bouton « Autoriser la caméra ».
+   - Échec de capture → toast « Photo ratée ».
+2. **Bibliothèque** (`LibraryScreen.kt`)
+   - Barre du haut : retour vers la capture, titre « Bibliothèque (N) », menu ⋮ (Exporter ZIP, Importer ZIP, Exporter CSV).
+   - Filtres : Tous / À vérifier (`NEEDS_REVIEW` + `NOT_FOUND`) / Erreurs, avec leur compteur.
+   - Ligne : miniature de la photo, titre (ou « (sans titre) »), auteurs, statut en couleur, badge « doublon possible ».
+3. **Fiche** (`BookScreen.kt`)
+   - Photo, message d'erreur éventuel.
+   - Champs éditables : titre, auteur(s) séparés par « ; », éditeur, année, ISBN. Bouton « Valider » → `CONFIRMED` (actif si le titre n'est pas vide).
+   - Candidats (top 5) : couverture, titre, auteurs · éditeur · année, score, source. Un toucher remplit le formulaire, sans valider.
+   - « Relancer la recherche » avec le texte de requête modifiable.
+   - Texte OCR brut ; « Supprimer ce livre » avec confirmation.
 
-## 4. Fiabilité des enregistrements (règle n°1)
+## 4. Fiabilité des enregistrements
 
 **Une photo prise n'est jamais perdue, quel que soit l'échec qui suit.**
 
-Séquence de capture :
-1. `ImageCapture` écrit directement dans `filesDir/covers/{uuid}.jpg`.
-2. Insertion de la ligne Room `{id=uuid, photoPath, status=CAPTURED}`.
-3. Mise en file du traitement (`enqueueUniqueWork("process", KEEP)`).
-
-- Si l'étape 2 échoue : réessayer ; ne **pas** supprimer la photo.
-- Au démarrage de l'app : réconciliation.
-  - Tout fichier dans `covers/` sans ligne en base → créer la ligne en `CAPTURED`.
-  - Toute ligne qui n'est pas dans un état final → relancer le traitement.
-- La **base est la source de vérité**, les workers sont **idempotents** : ils lisent les livres selon leur statut et peuvent être relancés sans risque.
-- Les photos restent dans la mémoire de l'app ; on ne les supprime qu'à la suppression du livre.
+- La photo est toujours `filesDir/covers/{id}.jpg` ; **aucun chemin n'est stocké en base**, il est dérivé de l'id.
+- Capture : CameraX écrit le JPEG → la ligne `CAPTURED` est insérée dans le scope applicatif (qui survit à l'écran) → OCR mis en file.
+- Une erreur dans ce scope est journalisée, pas de crash ; la photo est rattrapée par la réconciliation.
+- **Réconciliation** à chaque démarrage (`BiblioApp.onCreate`) :
+  - tout `.jpg` non vide sans ligne en base → ligne `CAPTURED` ;
+  - puis relance du traitement, qui reprend tout statut non final.
+- Suppression : photo d'abord, puis la ligne (sinon la photo restante ressusciterait le livre).
+- Room version 1, schéma exporté ; **jamais** de `fallbackToDestructiveMigration`.
 
 ## 5. Traitement asynchrone
 
 ### Machine à états
-
 ```
-CAPTURED ──OCR──▶ OCR_DONE ──lookup──▶ MATCHED       (auto, score élevé)
-                                   ├─▶ NEEDS_REVIEW  (candidats douteux)
-                                   └─▶ NOT_FOUND     (aucun candidat)
-MATCHED / NEEDS_REVIEW / NOT_FOUND ──utilisateur──▶ CONFIRMED
-toute étape ──échec répété──▶ ERROR (photo conservée, bouton « Réessayer »)
+CAPTURED ──OCR──▶ OCR_DONE ──recherche──▶ MATCHED       (auto)
+                                     ├─▶ NEEDS_REVIEW
+                                     └─▶ NOT_FOUND
+MATCHED / NEEDS_REVIEW / NOT_FOUND ──« Valider »──▶ CONFIRMED
+étape en échec 5 fois ──▶ ERROR (photo conservée)
+« Relancer » ──▶ CAPTURED (si pas encore d'OCR) ou OCR_DONE (avec la requête saisie)
 ```
 
-### Workers
-- **OcrWorker** (sans contrainte, tourne hors ligne) : traite les livres en `CAPTURED`.
-  Il enregistre le texte brut **et** les lignes avec leur hauteur de boîte (JSON), puis passe en `OCR_DONE`.
-- **LookupWorker** (contrainte `CONNECTED`) : traite les livres en `OCR_DONE`.
-  Hors ligne, le travail attend le réseau tout seul.
-- Retry : backoff exponentiel de WorkManager. Après 5 échecs → `ERROR` + `lastError`.
-- Appels API séquentiels (un livre à la fois) pour rester sous les quotas.
+### Workers (`work/Processing.kt`)
+- La base est la source de vérité. Chaque worker traite **toutes** les lignes de son statut d'entrée ; il est idempotent.
+- **OcrWorker** : statut `CAPTURED`, sans contrainte (marche hors ligne). Il enregistre :
+  - le texte brut ;
+  - les lignes avec la hauteur de leur boîte (JSON) ;
+  - la requête construite (§6).
 
-## 6. De l'OCR à la requête
+  À la fin, il met la recherche en file.
+- **LookupWorker** : statut `OCR_DONE`, contrainte réseau `CONNECTED`.
+- Deux chaînes uniques séparées (`"ocr"`, `"lookup"`, `APPEND_OR_REPLACE`) : l'OCR n'attend jamais derrière une recherche qui attend le réseau.
+- Échec d'un livre : `attempts + 1` et `lastError` enregistrés. À 5 → `ERROR`, sinon `Result.retry()` (backoff exponentiel par défaut de WorkManager).
 
-L'OCR d'une couverture est bruité : éditeur, collection, « Prix Goncourt », citations de presse…
+## 6. De l'OCR à la requête (`match/Matching.kt`)
 
-1. Récupérer les lignes ML Kit avec la hauteur de leur boîte englobante.
-2. Normaliser : minuscules, sans accents, sans ponctuation.
-3. Retirer les mots parasites connus : `editions, roman, prix, collection, poche, folio, livre de poche, j'ai lu, points, traduit de, preface…`. Liste en dur, à enrichir.
-4. Trier les lignes par hauteur décroissante : le titre et l'auteur sont généralement les plus gros.
-5. Requête = les 3 à 4 plus grosses lignes, jointes, tronquées à environ 100 caractères.
+1. Normalisation : minuscules, accents et ponctuation retirés.
+2. Ligne supprimée entièrement si elle contient : `prix, traduit, traduction, preface, postface`.
+3. Expressions retirées : `livre de poche`, `j ai lu`.
+4. Mots retirés : `editions, edition, roman, prix, collection, poche, folio, points, pocket, inedit, nouvelle`.
+5. Lignes triées par hauteur décroissante. Requête = les 4 plus grosses, jointes, coupées à 100 caractères maximum sur une frontière de mot.
+6. Requête de secours : la plus grosse ligne seule.
 
-## 7. API de recherche
+Limite connue : les polices décoratives sont mal lues. Le contournement actuel est « Relancer » avec le titre corrigé (vérifié efficace).
 
-Gestion de la clé API : voir §11.
+## 7. API de recherche (`match/BookSearch.kt`)
 
-Les livres sont **en français** mais pas forcément d'auteurs français (traductions), donc on filtre sur la langue, pas sur le pays.
+Pour chaque requête (principale, puis secours), on interroge **Google Books puis Open Library**, et on s'arrête au premier `MATCHED`.
+- **Si une source échoue** (HTTP ≠ 2xx, réseau), on passe à la suivante.
+- On ne lève une erreur, donc une nouvelle tentative, que si **tous** les appels ont échoué.
+- Timeout 20 s par appel.
 
-**Principale : Google Books**
-```
-GET https://www.googleapis.com/books/v1/volumes
-    ?q={requête}&langRestrict=fr&maxResults=10&printType=books&key={clé}
-```
-- Gratuite. Avec une clé (projet Google Cloud gratuit) : 1000 requêtes/jour par défaut, largement suffisant.
-- Champs utilisés : `id, volumeInfo.title, subtitle, authors, publisher, publishedDate, industryIdentifiers, imageLinks.thumbnail`.
+**Google Books** : `volumes?q=…&langRestrict=fr&printType=books&maxResults=10[&key=…]`
+- Titre sans sous-titre (rarement sur la couverture), ISBN-13 de préférence, vignette forcée en https.
+- **Sans clé : 429 constaté le 2026-11-08** (quota partagé épuisé). La clé est donc nécessaire en pratique.
 
-**Secours : Open Library** (si 0 résultat ou score faible côté Google)
-```
-GET https://openlibrary.org/search.json?q={requête}&language=fre&limit=10
-    &fields=key,title,author_name,publisher,first_publish_year,isbn,cover_i
-```
-- Gratuite, sans clé. Fixer un `User-Agent` qui identifie l'app.
-
-Si la requête « 3 à 4 lignes » ne donne rien, une seconde tentative envoie seulement la plus grosse ligne.
+**Open Library** : `search.json?q=…&language=fre&limit=10&fields=key,title,author_name,publisher,first_publish_year,isbn,cover_i`
+- `User-Agent: BiblioScan/0.1 (personal Android app)`. Couverture : `covers.openlibrary.org/b/id/{cover_i}-M.jpg`.
 
 ## 8. Scoring et décision
 
-Pour chaque candidat :
-- `t` = part des mots du titre du candidat retrouvés dans le texte OCR.
-- `a` = part des noms d'auteur du candidat retrouvés dans le texte OCR (0 s'il n'y a pas d'auteur).
+- Mots = mots normalisés de 2 caractères ou plus.
+- `t` = part des mots du titre retrouvés dans l'OCR.
+- `a` = meilleure part, parmi les auteurs, des mots de son nom retrouvés dans l'OCR.
 - `score = 0.6·t + 0.4·a`
 
 Décision :
 - `MATCHED` si `best ≥ 0.8` **et** `best − second ≥ 0.15`.
-- `NEEDS_REVIEW` si `best ≥ 0.4` ; on garde les 5 meilleurs candidats.
+  - `second` = meilleur score d'une **œuvre différente** (titre + premier auteur normalisés différents). Plusieurs éditions d'un même livre ne créent donc pas d'ambiguïté.
+- `NEEDS_REVIEW` si `best ≥ 0.4`.
 - `NOT_FOUND` sinon.
 
-**Principe : un faux positif coûte plus cher qu'une vérification.** En cas de doute, `NEEDS_REVIEW`.
-Seuils à calibrer sur le corpus de test (§12).
+Un candidat sans auteur plafonne à 0.6, donc il ne peut jamais être en `MATCHED`.
+Les 5 meilleurs candidats sont conservés pour l'écran de revue. Les seuils restent à calibrer (§12).
 
-Doublons : un `googleId` ou un ISBN déjà présent → badge « doublon possible ». Ce n'est pas bloquant : on peut posséder deux exemplaires.
+Doublons : même `sourceId` (ou ISBN) sur plusieurs livres → badge, jamais bloquant.
 
-## 9. Modèle de données (Room)
+## 9. Modèle de données (`data/Book.kt`)
 
 ```kotlin
-@Entity
+@Serializable @Entity
 data class Book(
-    @PrimaryKey val id: String,          // UUID ; la photo est toujours covers/{id}.jpg (pas de chemin stocké)
+    @PrimaryKey val id: String,          // UUID ; photo = covers/{id}.jpg
     val createdAt: Long,
-    val status: Status,
+    val status: Status,                  // CAPTURED, OCR_DONE, MATCHED, NEEDS_REVIEW, NOT_FOUND, CONFIRMED, ERROR
     val attempts: Int = 0,
     val lastError: String? = null,
-    // OCR
     val ocrText: String? = null,
     val ocrLinesJson: String? = null,    // [{text, height}]
-    val query: String? = null,           // requête effectivement envoyée
-    // Résultat retenu
+    val query: String? = null,
     val title: String? = null,
     val authors: String? = null,         // "A; B"
     val publisher: String? = null,
     val year: String? = null,
     val isbn: String? = null,
-    val sourceId: String? = null,        // id Google Books ou clé Open Library
+    val sourceId: String? = null,        // "google:{id}" ou "openlibrary:{key}"
     val coverUrl: String? = null,
     val score: Double? = null,
-    val candidatesJson: String? = null,  // top 5 bruts, pour l'écran de revue
+    val candidatesJson: String? = null,  // top 5
 )
 ```
 
-## 10. Sauvegarde, export, import
+## 10. Sauvegarde, export, import (`data/Backup.kt`)
 
-Une app installée hors Play Store risque davantage une désinstallation forcée : une mise à jour signée avec une autre clé ne s'installe pas par-dessus (voir §11). Désinstaller efface la base **et** les photos. D'où :
+Tous les fichiers passent par le sélecteur de fichiers Android, donc ils sont hors de l'app et survivent à une désinstallation.
 
-- **Export ZIP** : `library.json` (tous les livres) + dossier `covers/`. Le fichier est écrit via le sélecteur de fichiers Android (`ACTION_CREATE_DOCUMENT`), donc hors de l'app : il survit à une désinstallation.
-- **Import ZIP** : restaure les livres et les photos. Un livre dont l'`id` existe déjà est ignoré (pas d'écrasement).
-- **Export CSV** : lecture seule, pour un tableur.
-- L'Auto Backup Android ne suffit pas : les photos dépassent sa limite de taille.
+- **Export ZIP** : `library.json` (tous les livres) + `covers/{id}.jpg`.
+- **Import ZIP** : ajoute seulement les livres et photos absents, n'écrase jamais rien, puis relance le traitement. Contrôles à la frontière de confiance :
+  - seules les entrées `covers/<uuid>.jpg` sont acceptées ;
+  - les livres dont l'id n'est pas un UUID sont ignorés ;
+  - chaque photo est écrite en `.tmp` puis renommée.
+- **Export CSV** : `titre,auteurs,editeur,annee,isbn,statut`, UTF-8 avec BOM (pour Excel).
 
 ## 11. Distribution (GitHub, hors Play Store)
 
-- Code sur un repo GitHub. APK publié dans les **GitHub Releases**, installé à la main (sideload).
-  Mises à jour : à la main, ou via Obtainium, qui surveille les releases GitHub.
-- **Signature** : une seule clé de release (keystore), sauvegardée hors du PC (gestionnaire de mots de passe).
-  - Perdre ce keystore = impossible de mettre à jour sans désinstaller, donc perte des données sans export.
-  - Ne jamais publier d'APK debug : sa clé diffère de la clé de release, il ne s'installe pas par-dessus.
-  - Le keystore et ses mots de passe ne sont **jamais commités** : ils sont lus depuis `keystore.properties`, ignoré par `.gitignore`.
-- **Clé Google Books** :
-  - Jamais dans le repo : lue depuis `local.properties` (ignoré par git) et injectée dans `BuildConfig.BOOKS_API_KEY`.
-  - Si elle est absente, l'app appelle l'API sans clé (quota partagé, moins fiable).
-  - Une clé embarquée dans un APK public est extractible : la restreindre à la seule « Books API » dans la console Google Cloud. Elle est gratuite, donc le risque se limite à l'épuisement du quota.
-- Pas de dépendance aux Google Play Services : ML Kit est en version bundled (déjà le choix du §2), donc l'app marche aussi sur les téléphones sans Google.
-- CI GitHub Actions (build + release signée sur tag) : plus tard, les builds locaux suffisent au début.
+- Repo : `github.com/psychobarge/biblio-scan`, branche `main`. Releases : APK, à installer à la main (ou suivre avec Obtainium).
+- Signature release lue depuis `keystore.properties` (ignoré par git). Une seule clé, sauvegardée hors du PC. Ne jamais publier d'APK debug.
+- `BOOKS_API_KEY` lue depuis `local.properties` (ignoré par git) → `BuildConfig`. À restreindre à la Books API dans Google Cloud.
+- Aucune dépendance aux Google Play Services : **vérifié sur GrapheneOS**.
+- Build local : `JAVA_HOME` doit pointer vers un JDK 17 (installé par scoop : `temurin17-jdk`), puis `./gradlew installDebug`.
 
-## 12. Critères d'acceptation / mesure
+## 12. Critères d'acceptation / vérification
 
-Corpus de test : **30 livres réels** de la bibliothèque, mélangeant auteurs français, traductions et poches.
+| Mesure | Cible | État |
+|---|---|---|
+| Build + 8 tests unitaires (requête, scoring, éditions, validation ZIP) | verts | ✅ |
+| Install + lancement sans crash sur Pixel 6 GrapheneOS | OK | ✅ |
+| Délai entre deux photos | < 1 s | 🟡 ressenti OK, non mesuré |
+| Photos perdues (app tuée pendant le traitement, mode avion) | 0 | ⬜ à tester |
+| Corpus de 30 livres : `MATCHED` corrects | ≥ 60 % | ⬜ |
+| Corpus : **faux `MATCHED`** | **≤ 2 %** | ⬜ |
+| Corpus : résolus après revue | ≥ 90 % | ⬜ |
+| Export puis import ZIP sur le téléphone, sans perte | OK | ⬜ |
 
-| Mesure | Cible |
-|---|---|
-| Délai entre deux photos | < 1 s |
-| Photos perdues (kill de l'app pendant le traitement, mode avion) | 0 |
-| Correct en `MATCHED` automatique | ≥ 60 % |
-| **Faux `MATCHED`** (mauvais livre accepté auto) | **≤ 2 %** |
-| Résolu après revue manuelle (choix d'un candidat) | ≥ 90 % |
+## 13. Décisions prises / questions ouvertes
 
-## 13. Questions ouvertes
-- Licence du repo (MIT, GPL…) ? Repo public ou privé ?
-- ~~Clé Google Books ?~~ Tranché : **clé nécessaire**. Testé le 2026-11-08, l'appel sans clé renvoie 429 (quota partagé épuisé). Sans clé, l'app se rabat sur Open Library.
-- Résolution des photos : 1920 px de large suffisent probablement pour l'OCR ; compresser pour l'espace disque ?
-- Rogner simplement la photo au cadre-guide (crop rectangulaire fixe, trivial) dès la V1 ?
-- Faut-il garder la couverture de l'API en plus de la photo perso, pour un affichage plus propre ?
+- ✅ Pas de recadrage en V1 ; résolution de capture 4:3, environ 1920×1440.
+- ✅ Clé Google Books nécessaire (le mode sans clé renvoie 429) ; Open Library sert de secours.
+- ✅ Chemin de la photo dérivé de l'id (pas de `photoPath` en base).
+- ✅ Couverture de l'API conservée (`coverUrl`) en plus de la photo perso ; l'affichage utilise la photo.
+- ❓ Licence et visibilité du repo (un `LICENSE` a été créé par GitHub : vérifier qu'il convient).
+- ❓ Réduire l'APK de release à `arm64-v8a` seulement (l'émulateur x86 ne pourrait plus l'installer) ?
