@@ -7,7 +7,7 @@
 
     <application
         android:name=".BiblioApp"
-        android:label="BiblioScan"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:enableOnBackInvokedCallback="true"
         android:theme="@style/Theme.BiblioScan.Starting">

@@ -23,8 +23,10 @@ android {
         applicationId = "app.biblioscan"
         minSdk = 28
         targetSdk = 35
+        // Obtainium compares versionName with the GitHub release tag (v0.0.1): keep them in sync.
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.0.1"
+        manifestPlaceholders["appLabel"] = "BiblioScan"
         // Empty key = keyless Google Books calls (shared quota). See SPEC.md §11.
         buildConfigField("String", "BOOKS_API_KEY", "\"${localProps.getProperty("BOOKS_API_KEY", "")}\"")
     }
@@ -39,6 +41,12 @@ android {
     }
 
     buildTypes {
+        // Separate app id: dev builds never collide with the signed release installed from GitHub.
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            manifestPlaceholders["appLabel"] = "BiblioScan dev"
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")
