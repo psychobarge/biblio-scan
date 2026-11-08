@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Book inside a viewfinder. 108dp canvas; everything stays inside the 66dp safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M32,42 V32 H42 M66,32 H76 V42 M76,66 V76 H66 M42,76 H32 V66"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M46,39 H48 V69 H46 A2,2 0 0 1 44,67 V41 A2,2 0 0 1 46,39 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M50,39 H62 A2,2 0 0 1 64,41 V67 A2,2 0 0 1 62,69 H50 Z" />
+</vector>

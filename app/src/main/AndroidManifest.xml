@@ -8,9 +8,12 @@
     <application
         android:name=".BiblioApp"
         android:label="BiblioScan"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        android:icon="@mipmap/ic_launcher"
+        android:enableOnBackInvokedCallback="true"
+        android:theme="@style/Theme.BiblioScan.Starting">
         <activity
             android:name=".MainActivity"
+            android:screenOrientation="portrait"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -80,7 +80,7 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 status = Status.OCR_DONE,
                 ocrText = text.text,
                 ocrLinesJson = json.encodeToString(lines),
-                query = Matching.buildQuery(lines),
+                query = book.query ?: Matching.buildQuery(lines), // keep a query the user typed before OCR ran
                 attempts = 0,
                 lastError = null,
             )
@@ -94,7 +94,9 @@ class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
     override suspend fun doWork(): Result {
         val retry = Processing.forEach(applicationContext.app.db.books(), Status.OCR_DONE) { book ->
             val lines = book.ocrLinesJson?.let { json.decodeFromString<List<OcrLine>>(it) }.orEmpty()
-            val d = BookSearch.search(listOfNotNull(book.query, Matching.biggestLine(lines)), book.ocrText.orEmpty())
+            // Score against the query too: a title typed by hand must count even when the OCR misread it.
+            val reference = listOfNotNull(book.ocrText, book.query).joinToString("\n")
+            val d = BookSearch.search(listOfNotNull(book.query, Matching.biggestLine(lines)), reference)
             val best = d.ranked.firstOrNull()?.takeIf { d.verdict == Verdict.MATCHED }
             book.copy(
                 status = Status.valueOf(d.verdict.name),

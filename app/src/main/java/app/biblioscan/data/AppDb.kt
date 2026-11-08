@@ -23,6 +23,10 @@ interface BookDao {
     @Query("SELECT * FROM Book WHERE id = :id")
     suspend fun get(id: String): Book?
 
+    /** Review queue, oldest first. Skipped books stay behind the cursor, so review always moves forward. */
+    @Query("SELECT * FROM Book WHERE status IN ('NEEDS_REVIEW', 'NOT_FOUND') AND createdAt > :after ORDER BY createdAt LIMIT 1")
+    suspend fun nextToReview(after: Long): Book?
+
     @Query("SELECT * FROM Book WHERE status = :status ORDER BY createdAt")
     suspend fun byStatus(status: Status): List<Book>
 

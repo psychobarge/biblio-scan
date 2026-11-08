@@ -2,6 +2,34 @@
 
 Base : [SPEC.md](SPEC.md) (V1 telle que construite). Cette passe ne touche **ni au traitement ni aux données** : uniquement l'interface, la navigation et la finition.
 
+## État (branche `feat/ui-ux`, 2026-11-08)
+
+Implémentée en une seule passe, et non en 4 PR. Vérifié sur Pixel 6 GrapheneOS en **navigation 3 boutons** :
+- bibliothèque, caméra et fiche : rien sous les barres système ;
+- icônes de statut claires sur la caméra.
+
+12 tests unitaires verts (dont le tri et la recherche).
+
+Pas encore vérifié :
+- navigation par gestes ;
+- mode sombre ;
+- police à 200 % ;
+- mode revue de bout en bout (aucun livre « à vérifier » sur le téléphone) ;
+- écran de permission refusée.
+
+Écarts et précisions par rapport au texte ci-dessous :
+- **Caméra : ce que tu vois = la photo.** L'aperçu est une fenêtre 2:3, et non plus un plein écran avec un cadre dessiné par-dessus. Un `ViewPort` CameraX 2:3 recadre l'aperçu et le JPEG sur la même zone.
+  - Photo obtenue : 1280×1920.
+  - Vérifié sur le Pixel : même cadrage que l'aperçu.
+  - Avant, l'aperçu rognait les côtés pour remplir l'écran, alors que la photo gardait tout le champ 4:3 : elle prenait donc beaucoup plus large que le cadre.
+- Hors mode revue, « Valider » ramène à la bibliothèque, avec une Snackbar « Livre validé ».
+- Fiche : un bouton **« Rechercher avec ce titre et cet auteur »** sous le formulaire.
+  - Il enregistre d'abord les champs saisis, puis relance la recherche avec titre + auteur.
+  - Le score compare désormais les candidats au texte OCR **et** à la requête : un titre tapé à la main compte, même si l'OCR l'avait mal lu.
+  - La relance en texte libre reste disponible dans ⋮.
+- Mode revue : les livres sont parcourus du plus ancien au plus récent. « Passer » avance sans rien changer. Le compteur « n / total » est figé au total de départ.
+- Couleurs dynamiques : sur le téléphone de test, la palette système est monochrome, donc l'app est en gris. C'est voulu, elle suit le système.
+
 ## 1. Objectifs
 
 1. L'app s'ouvre sur la **bibliothèque**, après un splash système.

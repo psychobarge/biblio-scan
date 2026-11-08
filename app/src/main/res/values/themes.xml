@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#1F5F5B</color>
+
+    <!-- System splash: shown until the first frame, then switches to the app theme. -->
+    <style name="Theme.BiblioScan.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/brand</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="postSplashScreenTheme">@style/Theme.BiblioScan</item>
+    </style>
+
+    <style name="Theme.BiblioScan" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
