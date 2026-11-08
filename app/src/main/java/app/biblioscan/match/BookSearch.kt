@@ -18,6 +18,7 @@ object BookSearch {
      * One source failing (e.g. Google 429 without a key) falls through to the next; throws only if every call failed.
      */
     fun search(queries: List<String>, ocrText: String): Decision {
+        val main = queries.firstOrNull().orEmpty() // candidates are scored against the main query
         val found = mutableListOf<Candidate>()
         var failure: IOException? = null
         var succeeded = false
@@ -30,12 +31,12 @@ object BookSearch {
                     failure = e
                     continue
                 }
-                val d = Matching.decide(found, ocrText)
+                val d = Matching.decide(found, ocrText, main)
                 if (d.verdict == Verdict.MATCHED) return d
             }
         }
         if (!succeeded && failure != null) throw failure // offline or all APIs down: let WorkManager retry
-        return Matching.decide(found, ocrText)
+        return Matching.decide(found, ocrText, main)
     }
 
     fun googleBooks(q: String): List<Candidate> {
@@ -57,6 +58,7 @@ object BookSearch {
                 year = v.publishedDate?.take(4),
                 isbn = (ids.firstOrNull { it.type == "ISBN_13" } ?: ids.firstOrNull { it.type == "ISBN_10" })?.identifier,
                 coverUrl = v.imageLinks?.thumbnail?.replace("http://", "https://"),
+                language = v.language,
             )
         }
     }
@@ -96,6 +98,7 @@ object BookSearch {
         val authors: List<String> = emptyList(),
         val publisher: String? = null,
         val publishedDate: String? = null,
+        val language: String? = null,
         val industryIdentifiers: List<GId> = emptyList(),
         val imageLinks: GImages? = null,
     )

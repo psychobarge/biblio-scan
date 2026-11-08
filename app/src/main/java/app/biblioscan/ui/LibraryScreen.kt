@@ -75,7 +75,6 @@ import app.biblioscan.data.Books
 import app.biblioscan.data.Status
 import app.biblioscan.match.Matching
 import coil.compose.AsyncImage
-import coil.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -110,6 +109,7 @@ fun LibraryScreen(
     onScan: () -> Unit,
     onOpen: (String) -> Unit,
     onReview: (firstId: String, total: Int) -> Unit,
+    onSettings: () -> Unit,
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -201,6 +201,8 @@ fun LibraryScreen(
                             DropdownMenuItem(text = { Text("Exporter (ZIP)") }, onClick = { menu = false; exportZip.launch("biblioscan.zip") })
                             DropdownMenuItem(text = { Text("Importer (ZIP)") }, onClick = { menu = false; importZip.launch(arrayOf("application/zip")) })
                             DropdownMenuItem(text = { Text("Exporter (CSV)") }, onClick = { menu = false; exportCsv.launch("biblioscan.csv") })
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("Paramètres") }, onClick = { menu = false; onSettings() })
                         }
                     }
                 },
@@ -288,11 +290,18 @@ private fun EmptyState(title: String, text: String?, onScan: (() -> Unit)?, onIm
 
 @Composable
 private fun BookRow(book: Book, isDupe: Boolean, onClick: () -> Unit) {
+    val ctx = LocalContext.current
     Row(
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        BookThumbnail(book, Modifier.size(width = 48.dp, height = 72.dp).clip(RoundedCornerShape(4.dp)))
+        // Always the user's own photo (SPEC-4 §1): it is the book actually on the shelf.
+        AsyncImage(
+            model = Books.photoFile(ctx, book.id),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(width = 48.dp, height = 72.dp).clip(RoundedCornerShape(4.dp)),
+        )
         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             if (book.status.inProgress && book.title == null) {
                 Text("Lecture en cours…", style = MaterialTheme.typography.titleMedium, fontStyle = FontStyle.Italic)
@@ -306,19 +315,4 @@ private fun BookRow(book: Book, isDupe: Boolean, onClick: () -> Unit) {
             }
         }
     }
-}
-
-/** API cover once the book is identified, own photo otherwise or when the cover can't load (SPEC-2 §4.1). */
-@Composable
-fun BookThumbnail(book: Book, modifier: Modifier) {
-    val ctx = LocalContext.current
-    val photo = Books.photoFile(ctx, book.id)
-    val useCover = book.coverUrl != null && (book.status == Status.MATCHED || book.status == Status.CONFIRMED)
-    AsyncImage(
-        model = if (useCover) book.coverUrl else photo,
-        error = rememberAsyncImagePainter(photo),
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    )
 }

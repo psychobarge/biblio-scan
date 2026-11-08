@@ -16,12 +16,14 @@ import app.biblioscan.ui.BiblioTheme
 import app.biblioscan.ui.BookScreen
 import app.biblioscan.ui.CaptureScreen
 import app.biblioscan.ui.LibraryScreen
+import app.biblioscan.ui.SettingsScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 
 @Serializable object LibraryRoute
 @Serializable object CaptureRoute
+@Serializable object SettingsRoute
 
 /** reviewPos > 0 = review mode, showing "reviewPos / reviewTotal". */
 @Serializable data class BookRoute(val id: String, val reviewPos: Int = 0, val reviewTotal: Int = 0)
@@ -49,8 +51,10 @@ class MainActivity : ComponentActivity() {
                             onScan = { nav.navigate(CaptureRoute) },
                             onOpen = { nav.navigate(BookRoute(it)) },
                             onReview = { id, total -> nav.navigate(BookRoute(id, 1, total)) },
+                            onSettings = { nav.navigate(SettingsRoute) },
                         )
                     }
+                    composable<SettingsRoute> { SettingsScreen(snackbar = snackbar, onBack = { nav.popBackStack() }) }
                     composable<CaptureRoute> {
                         CaptureScreen(
                             onDone = { nav.popBackStack() },

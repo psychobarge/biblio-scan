@@ -12,6 +12,7 @@ import org.junit.Test
 
 class MatchingTest {
     private val etranger = "ALBERT CAMUS\nL'étranger\nfolio\nPrix Nobel de littérature"
+    private val etrangerQuery = "l etranger albert camus" // what buildQuery makes of that cover
 
     private fun cand(id: String, title: String, vararg authors: String) = Candidate(id, title, authors.toList())
 
@@ -47,24 +48,27 @@ class MatchingTest {
     @Test fun `several editions of the same work still auto-match`() {
         val d = Matching.decide(
             listOf(cand("g:1", "L'Étranger", "Albert Camus"), cand("g:2", "L'étranger", "Albert Camus"), cand("g:3", "La Peste", "Albert Camus")),
-            etranger,
+            etranger, etrangerQuery,
         )
         assertEquals(Verdict.MATCHED, d.verdict)
         assertEquals(1.0, d.ranked.first().score, 1e-9)
     }
 
     @Test fun `two different works scoring alike need review`() {
-        val d = Matching.decide(listOf(cand("a", "L'étranger", "Albert Camus"), cand("b", "L'étranger", "Albert Camus Jr")), etranger)
+        val d = Matching.decide(listOf(cand("a", "L'étranger", "Albert Camus"), cand("b", "L'étranger", "Albert Camus Jr")), etranger, etrangerQuery)
         // second candidate: same title, author tokens 2/3 -> different work, close score
         assertEquals(Verdict.NEEDS_REVIEW, d.verdict)
     }
 
-    @Test fun `title only match without author is review at best`() =
-        assertEquals(Verdict.NEEDS_REVIEW, Matching.decide(listOf(cand("a", "L'étranger")), etranger).verdict)
+    @Test fun `a candidate without author cannot be picked, but stays listed`() {
+        val d = Matching.decide(listOf(cand("a", "L'étranger")), etranger, etrangerQuery)
+        assertEquals(Verdict.NOT_FOUND, d.verdict) // explains 1 of the 3 searched words
+        assertEquals(1, d.ranked.size)
+    }
 
     @Test fun `unrelated or no candidates is not found`() {
-        assertEquals(Verdict.NOT_FOUND, Matching.decide(listOf(cand("a", "Dune", "Frank Herbert")), etranger).verdict)
-        assertEquals(Verdict.NOT_FOUND, Matching.decide(emptyList(), etranger).verdict)
+        assertEquals(Verdict.NOT_FOUND, Matching.decide(listOf(cand("a", "Dune", "Frank Herbert")), etranger, etrangerQuery).verdict)
+        assertEquals(Verdict.NOT_FOUND, Matching.decide(emptyList(), etranger, etrangerQuery).verdict)
     }
 
     @Test fun `zip import only accepts plain uuid cover entries`() {

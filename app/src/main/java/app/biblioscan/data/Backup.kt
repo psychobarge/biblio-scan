@@ -3,6 +3,7 @@ package app.biblioscan.data
 import android.content.Context
 import android.net.Uri
 import app.biblioscan.app
+import app.biblioscan.match.NoiseEntry
 import app.biblioscan.match.json
 import app.biblioscan.work.Processing
 import kotlinx.serialization.encodeToString
@@ -13,6 +14,7 @@ import java.util.zip.ZipOutputStream
 /** ZIP = library.json + covers/{id}.jpg. Written outside the app (SAF), so it survives an uninstall. SPEC §10. */
 object Backup {
     private const val LIBRARY = "library.json"
+    private const val SETTINGS = "settings.json" // the noise list, only when customised
 
     // Trust boundary: an imported ZIP may be anything. Only plain "covers/<uuid>.jpg" entries are accepted.
     private const val UUID = "[0-9a-fA-F-]{36}"
@@ -28,6 +30,11 @@ object Backup {
             zip.putNextEntry(ZipEntry(LIBRARY))
             zip.write(json.encodeToString(books).toByteArray())
             zip.closeEntry()
+            if (!Settings.noiseIsDefault(ctx)) {
+                zip.putNextEntry(ZipEntry(SETTINGS))
+                zip.write(Settings.noiseJson(ctx).toByteArray())
+                zip.closeEntry()
+            }
             for (b in books) {
                 val photo = Books.photoFile(ctx, b.id).takeIf { it.exists() } ?: continue
                 zip.putNextEntry(ZipEntry("covers/${b.id}.jpg"))
@@ -46,6 +53,10 @@ object Backup {
             generateSequence { zip.nextEntry }.forEach { entry ->
                 if (entry.name == LIBRARY) {
                     books = json.decodeFromString<List<Book>>(zip.readBytes().decodeToString()).filter { isValidId(it.id) }
+                } else if (entry.name == SETTINGS) {
+                    // Never overwrite a list the user already customised on this phone.
+                    val noise = runCatching { json.decodeFromString<List<NoiseEntry>>(zip.readBytes().decodeToString()) }.getOrNull()
+                    if (noise != null && Settings.noiseIsDefault(ctx)) Settings.setNoise(ctx, noise)
                 } else {
                     val id = coverIdOf(entry.name) ?: return@forEach
                     val dest = Books.photoFile(ctx, id)

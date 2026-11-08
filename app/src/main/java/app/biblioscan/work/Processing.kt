@@ -13,6 +13,7 @@ import app.biblioscan.app
 import app.biblioscan.data.Book
 import app.biblioscan.data.BookDao
 import app.biblioscan.data.Books
+import app.biblioscan.data.Settings
 import app.biblioscan.data.Status
 import app.biblioscan.match.BookSearch
 import app.biblioscan.match.Matching
@@ -72,6 +73,7 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
 
     override suspend fun doWork(): Result {
         val ctx = applicationContext
+        val noise = Settings.noise(ctx) // read once per pass: edits apply to the next books
         val retry = Processing.forEach(ctx.app.db.books(), Status.CAPTURED) { book ->
             // fromFilePath applies the JPEG's EXIF rotation.
             val image = InputImage.fromFilePath(ctx, Uri.fromFile(Books.photoFile(ctx, book.id)))
@@ -89,7 +91,7 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 status = Status.OCR_DONE,
                 ocrText = text.text,
                 ocrLinesJson = json.encodeToString(lines),
-                query = book.query ?: Matching.buildQuery(lines), // keep a query the user typed before OCR ran
+                query = book.query ?: Matching.buildQuery(lines, noise), // keep a query the user typed before OCR ran
                 attempts = 0,
                 lastError = null,
             )
@@ -101,11 +103,12 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
 
 class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
+        val noise = Settings.noise(applicationContext)
         val retry = Processing.forEach(applicationContext.app.db.books(), Status.OCR_DONE) { book ->
             val lines = book.ocrLinesJson?.let { json.decodeFromString<List<OcrLine>>(it) }.orEmpty()
             // Score against the query too: a title typed by hand must count even when the OCR misread it.
             val reference = listOfNotNull(book.ocrText, book.query).joinToString("\n")
-            val d = BookSearch.search(listOfNotNull(book.query, Matching.biggestLine(lines)), reference)
+            val d = BookSearch.search(listOfNotNull(book.query, Matching.biggestLine(lines, noise)), reference)
             val best = d.ranked.firstOrNull()?.takeIf { d.verdict == Verdict.MATCHED }
             book.copy(
                 status = Status.valueOf(d.verdict.name),

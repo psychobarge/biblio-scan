@@ -144,7 +144,8 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
                     Button(
                         onClick = {
                             scope.launch {
-                                dao.update(edited.copy(status = Status.CONFIRMED, lastError = null))
+                                // Once validated the API cover is no longer needed (SPEC-4 §3).
+                                dao.update(edited.copy(status = Status.CONFIRMED, lastError = null, coverUrl = null))
                                 if (review) next() else { onBack(); toast("Livre validé") }
                             }
                         },
@@ -233,7 +234,7 @@ private fun Header(b: Book, onPhotoClick: () -> Unit) {
             )
             Text("Votre photo", style = MaterialTheme.typography.labelSmall)
         }
-        b.coverUrl?.let { url ->
+        b.coverUrl?.takeIf { b.status != Status.CONFIRMED }?.let { url ->
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 AsyncImage(
                     model = url,
@@ -272,7 +273,15 @@ private fun CandidateCard(c: Candidate, selected: Boolean, onPick: () -> Unit) {
                     listOfNotNull(c.authors.joinToString(", ").ifBlank { null }, c.publisher, c.year).joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
-                Text("${strength(c.score)} · ${c.sourceId.substringBefore(':')}", style = MaterialTheme.typography.labelSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    // Foreign edition: shown so the user knows what they pick (SPEC-4 §2.2).
+                    c.language?.takeIf { !it.startsWith("fr") }?.let { lang ->
+                        Surface(color = MaterialTheme.colorScheme.errorContainer, shape = RoundedCornerShape(4.dp)) {
+                            Text(lang.uppercase(), Modifier.padding(horizontal = 4.dp), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    Text("${strength(c.score)} · ${c.sourceId.substringBefore(':')}", style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }
