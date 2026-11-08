@@ -35,6 +35,9 @@ object Matching {
     private val dropLineWords = setOf("prix", "traduit", "traduction", "preface", "postface")
     private val noisePhrases = listOf("livre de poche", "j ai lu")
     private val noiseWords = setOf("editions", "edition", "roman", "prix", "collection", "poche", "folio", "points", "pocket", "inedit", "nouvelle")
+    // Publisher/collection marks often printed along the edges; the OCR glues them into one token
+    // ("garnierflammarionh", "texteintegralgarnier…"), so they are matched inside words.
+    private val noiseInside = listOf("flammarion", "garnier", "integral", "gallimard")
 
     fun normalize(s: String): String =
         Normalizer.normalize(s, Normalizer.Form.NFD)
@@ -49,7 +52,9 @@ object Matching {
         var n = " ${normalize(line)} "
         if (n.split(' ').any { it in dropLineWords }) return "" // "Prix Goncourt", "Traduit de l'anglais par…"
         noisePhrases.forEach { n = n.replace(" $it ", " ") }
-        return n.split(' ').filter { it.isNotEmpty() && it !in noiseWords }.joinToString(" ")
+        return n.split(' ')
+            .filter { w -> w.isNotEmpty() && w !in noiseWords && noiseInside.none { w.contains(it) } }
+            .joinToString(" ")
     }
 
     private fun cleanedBySize(lines: List<OcrLine>) =

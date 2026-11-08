@@ -43,7 +43,7 @@ Recadrage auto, scan ISBN, modèle de vision (VLM), sync cloud, étagères/tags/
 |---|---|---|
 | Langage / UI | Kotlin + Jetpack Compose, Material 3 (thème par défaut) | Kotlin 2.1.0, BOM 2024.12.01 |
 | Build | AGP 8.7.3, Gradle 8.11.1 (wrapper), **JDK 17 requis** | |
-| SDK | minSdk 26, target/compile 35 | |
+| SDK | minSdk 28 (relevé par SPEC-3 pour `ImageDecoder`), target/compile 35 | |
 | Caméra | CameraX `ImageCapture` | 1.4.1 |
 | OCR | ML Kit Text Recognition v2 **bundled** (latin) | 16.0.1 |
 | Base | Room (schéma exporté dans `app/schemas/`) | 2.6.1 |
@@ -115,7 +115,11 @@ MATCHED / NEEDS_REVIEW / NOT_FOUND ──« Valider »──▶ CONFIRMED
 2. Ligne supprimée entièrement si elle contient : `prix, traduit, traduction, preface, postface`.
 3. Expressions retirées : `livre de poche`, `j ai lu`.
 4. Mots retirés : `editions, edition, roman, prix, collection, poche, folio, points, pocket, inedit, nouvelle`.
-5. Lignes triées par hauteur décroissante. Requête = les 4 plus grosses, jointes, coupées à 100 caractères maximum sur une frontière de mot.
+   Mots **contenant** `flammarion, garnier, integral, gallimard` retirés aussi : l'OCR colle souvent les noms de collection imprimés sur les bords (« GARNIERFLAMMARIONH »).
+5. Lignes triées par **hauteur des lettres** décroissante.
+   - La hauteur est mesurée dans le sens de la ligne, à partir des 4 coins fournis par ML Kit, et non par le cadre aligné sur l'image.
+   - Sinon, une ligne verticale ou penchée (nom de collection le long d'un bord) paraît énorme et passe devant le titre.
+   - Corrigé le 2026-11-08 après un import réel. Requête = les 4 plus grosses, jointes, coupées à 100 caractères maximum sur une frontière de mot.
 6. Requête de secours : la plus grosse ligne seule.
 
 Limite connue : les polices décoratives sont mal lues. Le contournement actuel est « Relancer » avec le titre corrigé (vérifié efficace).

@@ -2,7 +2,10 @@ package app.biblioscan.ui
 
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,6 +48,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,12 +141,30 @@ fun LibraryScreen(
     val importZip = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { io("Import") { "${Backup.importZip(ctx, it)} livres importés" } }
     }
+    // System photo picker: no storage permission, only the chosen photos are readable (SPEC-3).
+    val importPhotos = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        // App scope: the copy must finish even if the screen goes away (picker URIs die with the session).
+        ctx.app.scope.launch(Dispatchers.Main) {
+            launch { snackbar.showSnackbar("Import de ${uris.size} photo${if (uris.size > 1) "s" else ""}…") }
+            val r = Books.importPhotos(ctx, uris)
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(
+                "${r.ok} photo${if (r.ok > 1) "s" else ""} importée${if (r.ok > 1) "s" else ""}" +
+                    if (r.failed > 0) ", ${r.failed} illisible${if (r.failed > 1) "s" else ""}" else ""
+            )
+        }
+    }
+    val pickPhotos = { importPhotos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 
     // Same edition scanned twice: flagged, not blocked (you may own two copies).
     val dupes = books.mapNotNull { it.sourceId ?: it.isbn }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
     val inProgress = books.count { it.status.inProgress }
     val toReview = books.count { it.status.toReview }
     val shown = arrange(books.filter { filter.keep(it.status) }, search.orEmpty(), sort)
+    // A new capture or import lands at the top: show it instead of keeping the old scroll anchor.
+    val newest = books.maxByOrNull { it.createdAt }?.id
+    LaunchedEffect(newest) { if (sort == Sort.ADDED) listState.scrollToItem(0) }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -174,6 +196,8 @@ fun LibraryScreen(
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "Plus d'options") }
                         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            DropdownMenuItem(text = { Text("Importer des photos") }, onClick = { menu = false; pickPhotos() })
+                            HorizontalDivider()
                             DropdownMenuItem(text = { Text("Exporter (ZIP)") }, onClick = { menu = false; exportZip.launch("biblioscan.zip") })
                             DropdownMenuItem(text = { Text("Importer (ZIP)") }, onClick = { menu = false; importZip.launch(arrayOf("application/zip")) })
                             DropdownMenuItem(text = { Text("Exporter (CSV)") }, onClick = { menu = false; exportCsv.launch("biblioscan.csv") })
@@ -229,8 +253,13 @@ fun LibraryScreen(
             }
 
             when {
-                books.isEmpty() -> EmptyState("Votre bibliothèque est vide", "Photographiez la couverture de vos livres : ils seront reconnus automatiquement.", onScan)
-                shown.isEmpty() -> EmptyState("Aucun livre ne correspond", null, null)
+                books.isEmpty() -> EmptyState(
+                    "Votre bibliothèque est vide",
+                    "Photographiez la couverture de vos livres, ou importez des photos de votre galerie : " +
+                        "ils seront reconnus automatiquement.\n\nAstuce : le livre doit remplir la photo, sans autre livre visible derrière.",
+                    onScan, pickPhotos,
+                )
+                shown.isEmpty() -> EmptyState("Aucun livre ne correspond", null, null, null)
                 else -> LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 96.dp)) {
                     items(shown, key = { it.id }) { book ->
                         BookRow(book, isDupe = (book.sourceId ?: book.isbn) in dupes, onClick = { onOpen(book.id) })
@@ -243,7 +272,7 @@ fun LibraryScreen(
 }
 
 @Composable
-private fun EmptyState(title: String, text: String?, onScan: (() -> Unit)?) {
+private fun EmptyState(title: String, text: String?, onScan: (() -> Unit)?, onImport: (() -> Unit)?) {
     Column(
         Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
@@ -251,8 +280,9 @@ private fun EmptyState(title: String, text: String?, onScan: (() -> Unit)?) {
     ) {
         Icon(painterResource(R.drawable.ic_camera), null, Modifier.size(48.dp), tint = MaterialTheme.colorScheme.primary)
         Text(title, style = MaterialTheme.typography.titleMedium)
-        text?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        text?.let { Text(it, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center) }
         onScan?.let { Button(onClick = it) { Text("Scanner un livre") } }
+        onImport?.let { OutlinedButton(onClick = it) { Text("Importer des photos") } }
     }
 }
 

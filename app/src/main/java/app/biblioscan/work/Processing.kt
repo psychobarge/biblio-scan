@@ -24,6 +24,7 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.CancellationException
+import kotlin.math.hypot
 import kotlinx.serialization.encodeToString
 
 /**
@@ -75,7 +76,15 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
             // fromFilePath applies the JPEG's EXIF rotation.
             val image = InputImage.fromFilePath(ctx, Uri.fromFile(Books.photoFile(ctx, book.id)))
             val text = Tasks.await(recognizer.process(image))
-            val lines = text.textBlocks.flatMap { it.lines }.map { OcrLine(it.text, it.boundingBox?.height() ?: 0) }
+            // Text size = letter height measured along the line's own orientation (corner 0 = top-left,
+            // 3 = bottom-left in reading direction). An axis-aligned box would make a long vertical or
+            // tilted line (collection name along the edge) look like huge text.
+            val lines = text.textBlocks.flatMap { it.lines }.map { line ->
+                val c = line.cornerPoints
+                val size = if (c != null && c.size == 4) hypot((c[3].x - c[0].x).toDouble(), (c[3].y - c[0].y).toDouble()).toInt()
+                else line.boundingBox?.let { minOf(it.width(), it.height()) } ?: 0
+                OcrLine(line.text, size)
+            }
             book.copy(
                 status = Status.OCR_DONE,
                 ocrText = text.text,

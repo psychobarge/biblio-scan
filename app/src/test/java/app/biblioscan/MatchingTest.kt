@@ -30,6 +30,15 @@ class MatchingTest {
         assertEquals("l etranger", Matching.biggestLine(lines))
     }
 
+    @Test fun `collection marks glued by the OCR are dropped`() {
+        // Real OCR of a Garnier-Flammarion "Madame Bovary" cover, sizes = letter height.
+        val lines = listOf(
+            OcrLine("GARNIERFLAMMARIONH", 64), OcrLine("FLAUBERT", 59), OcrLine("ladame", 57),
+            OcrLine("FNOFNWIHIN VO", 61), OcrLine("TEXTEINTEGRALGARNIEERALAMMARIONO", 60),
+        )
+        assertEquals("fnofnwihin vo flaubert ladame", Matching.buildQuery(lines))
+    }
+
     @Test fun `query is capped near 100 chars on a word boundary`() {
         val q = Matching.buildQuery(listOf(OcrLine("mot ".repeat(60), 10)))
         assertTrue(q, q.length <= 100 && !q.endsWith(" "))
