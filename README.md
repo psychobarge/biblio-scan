@@ -35,4 +35,4 @@ Optional files at the project root (both git-ignored):
 - `local.properties` – `BOOKS_API_KEY=…`: a free Google Books API key (restrict it to the Books API). Without one, Google rate-limits quickly and lookups fall back to Open Library.
 - `keystore.properties` – release signing (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`).
 
-Design notes and decisions are in the `SPEC*.md` files (in French).
+Design notes and decisions are in the `SPEC*.md` files.
