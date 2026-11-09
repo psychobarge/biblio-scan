@@ -2,6 +2,7 @@ package app.biblioscan.work
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
@@ -16,6 +17,7 @@ import app.biblioscan.data.Books
 import app.biblioscan.data.Settings
 import app.biblioscan.data.Status
 import app.biblioscan.match.BookSearch
+import app.biblioscan.match.CoverReader
 import app.biblioscan.match.Matching
 import app.biblioscan.match.OcrLine
 import app.biblioscan.match.Verdict
@@ -73,7 +75,6 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
 
     override suspend fun doWork(): Result {
         val ctx = applicationContext
-        val noise = Settings.noise(ctx) // read once per pass: edits apply to the next books
         val retry = Processing.forEach(ctx.app.db.books(), Status.CAPTURED) { book ->
             // fromFilePath applies the JPEG's EXIF rotation.
             val image = InputImage.fromFilePath(ctx, Uri.fromFile(Books.photoFile(ctx, book.id)))
@@ -91,7 +92,6 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
                 status = Status.OCR_DONE,
                 ocrText = text.text,
                 ocrLinesJson = json.encodeToString(lines),
-                query = book.query ?: Matching.buildQuery(lines, noise), // keep a query the user typed before OCR ran
                 attempts = 0,
                 lastError = null,
             )
@@ -103,15 +103,22 @@ class OcrWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, p
 
 class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
-        val noise = Settings.noise(applicationContext)
-        val retry = Processing.forEach(applicationContext.app.db.books(), Status.OCR_DONE) { book ->
+        val ctx = applicationContext
+        // Read once per pass: edits apply to the next books.
+        val noise = Settings.noise(ctx)
+        val booksKey = Settings.key(ctx, Settings.BOOKS_KEY)
+        val deepseekKey = Settings.key(ctx, Settings.DEEPSEEK_KEY)
+        val retry = Processing.forEach(ctx.app.db.books(), Status.OCR_DONE) { book ->
             val lines = book.ocrLinesJson?.let { json.decodeFromString<List<OcrLine>>(it) }.orEmpty()
-            // Score against the query too: a title typed by hand must count even when the OCR misread it.
-            val reference = listOfNotNull(book.ocrText, book.query).joinToString("\n")
-            val d = BookSearch.search(listOfNotNull(book.query, Matching.biggestLine(lines, noise)), reference)
+            // Null query = none typed by the user: the LLM reads the cover, the OCR is the fallback (SPEC-5).
+            val query = book.query ?: readCover(book, deepseekKey) ?: Matching.buildQuery(lines, noise)
+            // Score against the query too: a title typed by hand (or read by the LLM) must count even when the OCR misread it.
+            val reference = listOfNotNull(book.ocrText, query).joinToString("\n")
+            val d = BookSearch.search(listOfNotNull(query, Matching.biggestLine(lines, noise)), reference, booksKey)
             val best = d.ranked.firstOrNull()?.takeIf { d.verdict == Verdict.MATCHED }
             book.copy(
                 status = Status.valueOf(d.verdict.name),
+                query = query,
                 candidatesJson = json.encodeToString(d.ranked.take(5)),
                 score = d.ranked.firstOrNull()?.score,
                 title = best?.title ?: book.title,
@@ -126,5 +133,16 @@ class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
             )
         }
         return if (retry) Result.retry() else Result.success()
+    }
+
+    /** Any LLM failure (no key, offline, bad key, quota) falls back to the OCR query instead of blocking the book. */
+    private fun readCover(book: Book, key: String): String? {
+        if (key.isBlank()) return null
+        return try {
+            CoverReader.read(Books.photoFile(applicationContext, book.id).readBytes(), key)
+        } catch (e: Exception) {
+            Log.w("BiblioScan", "cover reading failed for ${book.id}", e)
+            null
+        }
     }
 }

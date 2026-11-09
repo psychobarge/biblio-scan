@@ -1,6 +1,5 @@
 package app.biblioscan.match
 
-import app.biblioscan.BuildConfig
 import kotlinx.serialization.Serializable
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -17,13 +16,13 @@ object BookSearch {
      * Tries each query on Google Books then Open Library, stopping at the first confident match.
      * One source failing (e.g. Google 429 without a key) falls through to the next; throws only if every call failed.
      */
-    fun search(queries: List<String>, ocrText: String): Decision {
+    fun search(queries: List<String>, ocrText: String, booksKey: String = ""): Decision {
         val main = queries.firstOrNull().orEmpty() // candidates are scored against the main query
         val found = mutableListOf<Candidate>()
         var failure: IOException? = null
         var succeeded = false
         for (q in queries.filter { it.isNotBlank() }.distinct()) {
-            for (source in listOf(::googleBooks, ::openLibrary)) {
+            for (source in listOf<(String) -> List<Candidate>>({ googleBooks(it, booksKey) }, ::openLibrary)) {
                 try {
                     found += source(q)
                     succeeded = true
@@ -39,13 +38,13 @@ object BookSearch {
         return Matching.decide(found, ocrText, main)
     }
 
-    fun googleBooks(q: String): List<Candidate> {
+    fun googleBooks(q: String, key: String = ""): List<Candidate> {
         val url = "https://www.googleapis.com/books/v1/volumes".toHttpUrl().newBuilder()
             .addQueryParameter("q", q)
             .addQueryParameter("langRestrict", "fr")
             .addQueryParameter("printType", "books")
             .addQueryParameter("maxResults", "10")
-            .apply { if (BuildConfig.BOOKS_API_KEY.isNotBlank()) addQueryParameter("key", BuildConfig.BOOKS_API_KEY) }
+            .apply { if (key.isNotBlank()) addQueryParameter("key", key) }
             .build()
         return json.decodeFromString<GResponse>(get(url)).items.map { item ->
             val v = item.volumeInfo

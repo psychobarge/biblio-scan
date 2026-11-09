@@ -12,7 +12,6 @@ plugins {
 fun props(name: String) = Properties().apply {
     rootProject.file(name).takeIf { it.exists() }?.inputStream()?.use { load(it) }
 }
-val localProps = props("local.properties")
 val keystoreProps = props("keystore.properties")
 
 android {
@@ -23,12 +22,10 @@ android {
         applicationId = "app.biblioscan"
         minSdk = 28
         targetSdk = 35
-        // Obtainium compares versionName with the GitHub release tag (v0.0.1): keep them in sync.
-        versionCode = 1
-        versionName = "0.0.1"
+        // Obtainium compares versionName with the GitHub release tag (v0.0.2): keep them in sync.
+        versionCode = 2
+        versionName = "0.0.2"
         manifestPlaceholders["appLabel"] = "BiblioScan"
-        // Empty key = keyless Google Books calls (shared quota). See SPEC.md §11.
-        buildConfigField("String", "BOOKS_API_KEY", "\"${localProps.getProperty("BOOKS_API_KEY", "")}\"")
     }
 
     signingConfigs {
@@ -59,7 +56,6 @@ android {
     }
     buildFeatures {
         compose = true
-        buildConfig = true
     }
 }
 

@@ -6,9 +6,6 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.util.Log
 import app.biblioscan.app
-import app.biblioscan.match.Matching
-import app.biblioscan.match.OcrLine
-import app.biblioscan.match.json
 import app.biblioscan.work.Processing
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -98,19 +95,18 @@ object Books {
     }
 
     /**
-     * After the noise list changed (SPEC-4 §4.4): rebuild the query of every book the user has not
-     * validated (to review, not found, or auto-matched) from its stored OCR lines (no new OCR) and
+     * After the noise list changed (SPEC-4 §4.4): clear the query of every book the user has not
+     * validated (to review, not found, or auto-matched) so the lookup rebuilds it (no new OCR) and
      * search again. Confirmed books are never touched.
      */
     suspend fun reapplyNoise(ctx: Context): Int {
         val dao = ctx.app.db.books()
-        val noise = Settings.noise(ctx)
         val books = listOf(Status.NEEDS_REVIEW, Status.NOT_FOUND, Status.MATCHED)
             .flatMap { dao.byStatus(it) }
             .filter { it.ocrLinesJson != null }
         books.forEach { b ->
-            val lines = json.decodeFromString<List<OcrLine>>(b.ocrLinesJson!!)
-            var next = b.copy(status = Status.OCR_DONE, query = Matching.buildQuery(lines, noise), attempts = 0, lastError = null)
+            // Null query: the lookup rebuilds it (LLM, else OCR with the new noise list), SPEC-5.
+            var next = b.copy(status = Status.OCR_DONE, query = null, attempts = 0, lastError = null)
             // An automatic match filled these fields, not the user: drop them so a wrong match doesn't linger.
             if (b.status == Status.MATCHED) next = next.copy(
                 title = null, authors = null, publisher = null, year = null, isbn = null, sourceId = null, coverUrl = null, score = null,

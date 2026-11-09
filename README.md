@@ -30,9 +30,11 @@ JDK 17 and the Android SDK (platform 35) are required.
 ./gradlew assembleDebug
 ```
 
-Optional files at the project root (both git-ignored):
+API keys are entered in the app (⋮ → « Paramètres » → « Clés API ») and stored only on the phone, never in the APK or the repo:
 
-- `local.properties` – `BOOKS_API_KEY=…`: a free Google Books API key (restrict it to the Books API). Without one, Google rate-limits quickly and lookups fall back to Open Library.
+- **Google Books** (optional, free): without it, Google rate-limits quickly and lookups fall back to Open Library.
+- **DeepSeek** (optional, paid): the cover photo is sent to DeepSeek to read the title and author, which works much better than on-device OCR. Without it, only the OCR is used.
+
+Optional file at the project root (git-ignored):
+
 - `keystore.properties` – release signing (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`).
-
-Design notes and decisions are in the `SPEC*.md` files.

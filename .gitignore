@@ -8,8 +8,11 @@ captures/
 .externalNativeBuild/
 .cxx/
 
-# Secrets: never commit (see SPEC.md §11)
+# Secrets: never commit
 local.properties
 keystore.properties
 *.jks
 *.keystore
+
+# Design notes: kept locally, not published
+SPEC*.md

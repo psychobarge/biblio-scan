@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.biblioscan.data.Books
 import app.biblioscan.data.Settings
@@ -83,6 +84,19 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
         LazyColumn(contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = padding.calculateTopPadding() + 8.dp, bottom = padding.calculateBottomPadding() + 24.dp)) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Clés API", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Stockées uniquement sur ce téléphone. Sans clé Google Books, Google limite vite les recherches. " +
+                            "Avec une clé DeepSeek, la photo est envoyée à DeepSeek pour lire titre et auteur ; sinon seul l'OCR est utilisé.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    KeyField(Settings.BOOKS_KEY, "Clé Google Books")
+                    KeyField(Settings.DEEPSEEK_KEY, "Clé DeepSeek")
+                    HorizontalDivider(Modifier.padding(top = 8.dp))
+                }
+            }
+            item {
+                Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("Mots ignorés sur les couvertures", style = MaterialTheme.typography.titleMedium)
                     Text(
                         "Ces mots sont retirés de la recherche (éditeur, collection, genre…). " +
@@ -142,5 +156,20 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
             }) { Text("Rétablir") }
         },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Annuler") } },
+    )
+}
+
+/** Saved on every keystroke: the next lookup pass reads it. */
+@Composable
+private fun KeyField(name: String, label: String) {
+    val ctx = LocalContext.current
+    var value by remember { mutableStateOf(Settings.key(ctx, name)) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = { value = it; Settings.setKey(ctx, name, it) },
+        label = { Text(label) },
+        singleLine = true,
+        visualTransformation = PasswordVisualTransformation(),
+        modifier = Modifier.fillMaxWidth(),
     )
 }
