@@ -30,4 +30,6 @@ data class Book(
     val coverUrl: String? = null,
     val score: Double? = null,
     val candidatesJson: String? = null,
+    // Room or spot (SPEC-7); null = « Non rangé ». Only meaningful once CONFIRMED.
+    val placeId: String? = null,
 )

@@ -95,7 +95,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 @Composable
-fun CaptureScreen(onDone: () -> Unit, onOpenBook: (String) -> Unit) {
+/** [onFinish]: « Terminé » after at least one photo (SPEC-7 §6.1). */
+fun CaptureScreen(onDone: () -> Unit, onFinish: () -> Unit, onOpenBook: (String) -> Unit) {
     val ctx = LocalContext.current
     fun hasPermission() = ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
     var granted by remember { mutableStateOf(hasPermission()) }
@@ -128,7 +129,7 @@ fun CaptureScreen(onDone: () -> Unit, onOpenBook: (String) -> Unit) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (granted) {
-            Camera(onDone, onOpenBook)
+            Camera(onDone, onFinish, onOpenBook)
         } else {
             PermissionExplanation(
                 permanentlyDenied = permanentlyDenied,
@@ -170,7 +171,7 @@ private fun PermissionExplanation(permanentlyDenied: Boolean, onAsk: () -> Unit,
 }
 
 @Composable
-private fun Camera(onDone: () -> Unit, onOpenBook: (String) -> Unit) {
+private fun Camera(onDone: () -> Unit, onFinish: () -> Unit, onOpenBook: (String) -> Unit) {
     val ctx = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptics = LocalHapticFeedback.current
@@ -270,7 +271,7 @@ private fun Camera(onDone: () -> Unit, onOpenBook: (String) -> Unit) {
                         .clip(CircleShape).clickable(onClickLabel = "Prendre la photo", role = Role.Button) { shoot() }
                 )
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
-                    TextButton(onClick = onDone, modifier = Modifier.width(112.dp)) {
+                    TextButton(onClick = if (sessionCount > 0) onFinish else onDone, modifier = Modifier.width(112.dp)) {
                         Text(if (sessionCount > 0) "Terminé ($sessionCount)" else "Terminé", color = Color.White)
                     }
                 }

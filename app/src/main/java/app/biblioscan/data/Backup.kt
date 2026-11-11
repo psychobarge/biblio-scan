@@ -15,6 +15,7 @@ import java.util.zip.ZipOutputStream
 object Backup {
     private const val LIBRARY = "library.json"
     private const val SETTINGS = "settings.json" // the noise list, only when customised
+    private const val PLACES = "places.json" // rooms and spots (SPEC-7 §7)
 
     // Trust boundary: an imported ZIP may be anything. Only plain "covers/<uuid>.jpg" entries are accepted.
     private const val UUID = "[0-9a-fA-F-]{36}"
@@ -25,11 +26,17 @@ object Backup {
 
     suspend fun exportZip(ctx: Context, uri: Uri): Int {
         val books = ctx.app.db.books().snapshot()
+        val places = ctx.app.db.places().snapshot()
         val out = ctx.contentResolver.openOutputStream(uri) ?: error("impossible d'écrire le fichier")
         ZipOutputStream(out).use { zip ->
             zip.putNextEntry(ZipEntry(LIBRARY))
             zip.write(json.encodeToString(books).toByteArray())
             zip.closeEntry()
+            if (places.isNotEmpty()) {
+                zip.putNextEntry(ZipEntry(PLACES))
+                zip.write(json.encodeToString(places).toByteArray())
+                zip.closeEntry()
+            }
             if (!Settings.noiseIsDefault(ctx)) {
                 zip.putNextEntry(ZipEntry(SETTINGS))
                 zip.write(Settings.noiseJson(ctx).toByteArray())
@@ -48,11 +55,14 @@ object Backup {
     /** Adds missing books and photos; never overwrites an existing book. */
     suspend fun importZip(ctx: Context, uri: Uri): Int {
         var books = emptyList<Book>()
+        var places = emptyList<Place>()
         val input = ctx.contentResolver.openInputStream(uri) ?: error("impossible de lire le fichier")
         ZipInputStream(input).use { zip ->
             generateSequence { zip.nextEntry }.forEach { entry ->
                 if (entry.name == LIBRARY) {
                     books = json.decodeFromString<List<Book>>(zip.readBytes().decodeToString()).filter { isValidId(it.id) }
+                } else if (entry.name == PLACES) {
+                    places = runCatching { json.decodeFromString<List<Place>>(zip.readBytes().decodeToString()) }.getOrDefault(emptyList())
                 } else if (entry.name == SETTINGS) {
                     // Never overwrite a list the user already customised on this phone.
                     val noise = runCatching { json.decodeFromString<List<NoiseEntry>>(zip.readBytes().decodeToString()) }.getOrNull()
@@ -70,19 +80,27 @@ object Backup {
             }
         }
         // Photos are on disk before rows exist, same invariant as a capture.
+        val (ids, newPlaces) = Places.merge(ctx.app.db.places().snapshot(), places)
+        ctx.app.db.places().insert(newPlaces)
         val dao = ctx.app.db.books()
         val before = dao.ids().size
-        dao.insert(books)
+        dao.insert(books.map { it.copy(placeId = it.placeId?.let(ids::get)) }) // unknown place → « Non rangé »
         Processing.enqueueOcr(ctx) // imported books that were mid-processing resume
         return dao.ids().size - before
     }
 
     suspend fun exportCsv(ctx: Context, uri: Uri): Int {
         val books = ctx.app.db.books().snapshot()
+        val byId = ctx.app.db.places().snapshot().associateBy { it.id }
         fun cell(s: String?) = "\"" + s.orEmpty().replace("\"", "\"\"") + "\""
         val csv = buildString {
-            appendLine("titre,auteurs,editeur,annee,isbn,statut")
-            books.forEach { b -> appendLine(listOf(b.title, b.authors, b.publisher, b.year, b.isbn, b.status.name).joinToString(",") { cell(it) }) }
+            appendLine("titre,auteurs,editeur,annee,isbn,statut,piece,emplacement")
+            books.forEach { b ->
+                val p = b.placeId?.let(byId::get)
+                val room = p?.parentId?.let(byId::get) ?: p
+                val spot = p?.takeIf { it.parentId != null }
+                appendLine(listOf(b.title, b.authors, b.publisher, b.year, b.isbn, b.status.name, room?.name, spot?.name).joinToString(",") { cell(it) })
+            }
         }
         val out = ctx.contentResolver.openOutputStream(uri) ?: error("impossible d'écrire le fichier")
         // BOM so Excel opens the accents correctly.

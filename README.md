@@ -10,8 +10,9 @@ Built for French-language books (including translations), works fully without Go
 - **Fast capture** – shoot covers one after another; the preview window is exactly the photo that gets saved.
 - **Import from the gallery** – pick photos taken with the regular camera app (system photo picker, no storage permission).
 - **Background processing** – on-device OCR (ML Kit, bundled), then lookup on Google Books and Open Library, preferring French editions.
-- **Review queue** – uncertain matches land in "À vérifier"; pick one of the proposed books, fix the title, or search again with your own words.
-- **Library** – search by title or author, sort by date, title or author, filters by status, duplicate hints.
+- **« À valider »** – every scanned book waits there until you validate it: one by one (pick one of the proposed books, fix the title, or search again with your own words), or a whole shelf of sure matches at once.
+- **Rooms and spots** – validating files the book in a room and a spot (« Salon › Étagère noire 1 »); browse the library one shelf at a time, move books with a long press.
+- **Library** – search by title or author, always across the whole house, sort by date, title or author, duplicate hints.
 - **Settings** – edit the list of words ignored on covers (publisher, collection, genre labels…).
 - **Your data stays yours** – photos and the database live on the phone; ZIP export/import (photos + data) and CSV export.
 

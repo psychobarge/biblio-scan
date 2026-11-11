@@ -1,6 +1,8 @@
 package app.biblioscan.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -45,11 +47,14 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import app.biblioscan.data.Backup
 import app.biblioscan.data.Books
 import app.biblioscan.data.Settings
 import app.biblioscan.match.Matching
 import app.biblioscan.match.NoiseEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -75,6 +80,24 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
         deepseekKey = saved.second
         focus.clearFocus()
     }
+    fun io(label: String, block: suspend () -> String) = scope.launch {
+        val msg = try {
+            withContext(Dispatchers.IO) { block() }
+        } catch (e: Exception) {
+            "$label : échec (${e.message})"
+        }
+        snackbar.showSnackbar(msg)
+    }
+    val exportZip = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        uri?.let { io("Export") { "${Backup.exportZip(ctx, it)} livres exportés" } }
+    }
+    val exportCsv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { io("Export CSV") { "${Backup.exportCsv(ctx, it)} livres exportés" } }
+    }
+    val importZip = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { io("Import") { "${Backup.importZip(ctx, it)} livres importés" } }
+    }
+
     fun leave() {
         if (dirty) confirmLeave = true else onBack()
     }
@@ -119,6 +142,20 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
                         enabled = dirty,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Enregistrer") }
+                    HorizontalDivider(Modifier.padding(top = 8.dp))
+                }
+            }
+            // Rare actions: moved here from the library's menu (SPEC-8 §2.7).
+            item {
+                Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Sauvegarde", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Le ZIP contient les fiches, les photos, les pièces et emplacements. L'import ajoute ce qui manque sans rien écraser.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    OutlinedButton(onClick = { exportZip.launch("biblioscan.zip") }, modifier = Modifier.fillMaxWidth()) { Text("Exporter (ZIP)") }
+                    OutlinedButton(onClick = { importZip.launch(arrayOf("application/zip")) }, modifier = Modifier.fillMaxWidth()) { Text("Importer (ZIP)") }
+                    OutlinedButton(onClick = { exportCsv.launch("biblioscan.csv") }, modifier = Modifier.fillMaxWidth()) { Text("Exporter (CSV)") }
                     HorizontalDivider(Modifier.padding(top = 8.dp))
                 }
             }

@@ -23,11 +23,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -74,6 +77,7 @@ import app.biblioscan.BookRoute
 import app.biblioscan.app
 import app.biblioscan.data.Book
 import app.biblioscan.data.Books
+import app.biblioscan.data.Places
 import app.biblioscan.data.Status
 import app.biblioscan.match.Candidate
 import app.biblioscan.match.Matching
@@ -91,9 +95,13 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
     val book by dao.watch(route.id).collectAsStateWithLifecycle(null)
     val b = book ?: return
     val review = route.reviewPos > 0
+    val saving = !review && b.status == Status.CONFIRMED // a library book: the button saves edits
 
     // Reset the form when the worker changes the book (e.g. a lookup finishes).
-    var edited by remember(b.id, b.status) { mutableStateOf(b) }
+    // In review, the place picked for the previous book is the default (SPEC-7 §6.2).
+    var edited by remember(b.id, b.status) { mutableStateOf(b.copy(placeId = route.placeId ?: b.placeId)) }
+    val places by ctx.app.db.places().all().collectAsStateWithLifecycle(emptyList())
+    var placeSheet by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
     var relaunch by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -102,13 +110,13 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
     // Snackbars that must outlive this screen run in the app scope (the screen scope dies on navigation).
     fun toast(msg: String) = ctx.app.scope.launch(Dispatchers.Main) { snackbar.showSnackbar(msg) }
 
-    suspend fun next() {
+    suspend fun next(carry: String? = edited.placeId) {
         val n = dao.nextToReview(b.createdAt)
         if (n == null) {
             onBack()
             toast("Revue terminée")
         } else {
-            onNext(BookRoute(n.id, route.reviewPos + 1, maxOf(route.reviewTotal, route.reviewPos + 1)))
+            onNext(BookRoute(n.id, route.reviewPos + 1, maxOf(route.reviewTotal, route.reviewPos + 1), carry))
         }
     }
 
@@ -136,22 +144,29 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
         },
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
-                Row(
-                    Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    if (review) OutlinedButton(onClick = { scope.launch { next() } }) { Text("Passer") }
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                // Once validated the API cover is no longer needed (SPEC-4 §3).
-                                dao.update(edited.copy(status = Status.CONFIRMED, lastError = null, coverUrl = null))
-                                if (review) next() else { onBack(); toast("Livre validé") }
-                            }
-                        },
-                        enabled = !edited.title.isNullOrBlank(),
-                        modifier = Modifier.weight(1f),
-                    ) { Text(if (review) "Valider et suivant" else "Valider") }
+                Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
+                    // Validating is filing (SPEC-7): the place sits next to the button, always in sight (SPEC-8 §2.4).
+                    AssistChip(
+                        onClick = { placeSheet = true },
+                        label = { Text(Places.path(edited.placeId, places.associateBy { it.id }) ?: "Non rangé", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { Icon(Icons.Default.Place, null, Modifier.size(18.dp)) },
+                        trailingIcon = { Icon(Icons.Default.ArrowDropDown, "Changer le rangement", Modifier.size(18.dp)) },
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (review) OutlinedButton(onClick = { scope.launch { next() } }) { Text("Passer") }
+                        Button(
+                            onClick = {
+                                scope.launch {
+                                    // Once validated the API cover is no longer needed (SPEC-4 §3).
+                                    dao.update(edited.copy(status = Status.CONFIRMED, lastError = null, coverUrl = null))
+                                    if (review) next() else { onBack(); toast(if (saving) "Modifications enregistrées" else "Livre validé") }
+                                }
+                            },
+                            // « Enregistrer » only when something changed (SPEC-8 §2.4).
+                            enabled = !edited.title.isNullOrBlank() && (!saving || edited != b),
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (review) "Valider et suivant" else if (saving) "Enregistrer" else "Valider") }
+                    }
                 }
             }
         },
@@ -162,6 +177,24 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
         ) {
             Header(b, onPhotoClick = { fullscreen = true })
             b.lastError?.let { Text("Erreur : $it", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+
+            val candidates = remember(b.candidatesJson) {
+                b.candidatesJson?.let { runCatching { json.decodeFromString<List<Candidate>>(it) }.getOrNull() }.orEmpty()
+            }
+            @Composable fun Candidates() {
+                if (candidates.isEmpty()) return
+                Text("Livres proposés", style = MaterialTheme.typography.titleSmall)
+                candidates.forEach { c ->
+                    CandidateCard(c, selected = edited.sourceId == c.sourceId) {
+                        edited = edited.copy(
+                            title = c.title, authors = c.authors.joinToString("; "), publisher = c.publisher,
+                            year = c.year, isbn = c.isbn, sourceId = c.sourceId, coverUrl = c.coverUrl, score = c.score,
+                        )
+                    }
+                }
+            }
+            // Not validated yet: picking a candidate is the main action, so it comes first (SPEC-8 §2.4).
+            if (!saving) Candidates()
 
             OutlinedTextField(edited.title.orEmpty(), { edited = edited.copy(title = it) }, Modifier.fillMaxWidth(), label = { Text("Titre") })
             OutlinedTextField(edited.authors.orEmpty(), { edited = edited.copy(authors = it) }, Modifier.fillMaxWidth(), label = { Text("Auteur(s), séparés par ;") })
@@ -180,20 +213,7 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Rechercher avec ce titre et cet auteur") }
 
-            val candidates = remember(b.candidatesJson) {
-                b.candidatesJson?.let { runCatching { json.decodeFromString<List<Candidate>>(it) }.getOrNull() }.orEmpty()
-            }
-            if (candidates.isNotEmpty()) {
-                Text("Livres proposés", style = MaterialTheme.typography.titleSmall)
-                candidates.forEach { c ->
-                    CandidateCard(c, selected = edited.sourceId == c.sourceId) {
-                        edited = edited.copy(
-                            title = c.title, authors = c.authors.joinToString("; "), publisher = c.publisher,
-                            year = c.year, isbn = c.isbn, sourceId = c.sourceId, coverUrl = c.coverUrl, score = c.score,
-                        )
-                    }
-                }
-            }
+            if (saving) Candidates()
 
             b.ocrText?.let { OcrSection(it) }
         }
@@ -219,6 +239,13 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
     )
 
     if (fullscreen) PhotoViewer(b) { fullscreen = false }
+
+    if (placeSheet) PlaceSheet(
+        title = "Ranger dans",
+        current = edited.placeId ?: Places.NONE,
+        onPick = { placeSheet = false; edited = edited.copy(placeId = Places.placeIdOf(it)) },
+        onDismiss = { placeSheet = false },
+    )
 }
 
 @Composable
