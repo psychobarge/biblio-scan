@@ -19,6 +19,7 @@ import app.biblioscan.data.Status
 import app.biblioscan.match.BookSearch
 import app.biblioscan.match.CoverReader
 import app.biblioscan.match.Matching
+import app.biblioscan.match.NoiseEntry
 import app.biblioscan.match.OcrLine
 import app.biblioscan.match.Verdict
 import app.biblioscan.match.json
@@ -108,14 +109,19 @@ class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         val noise = Settings.noise(ctx)
         val booksKey = Settings.key(ctx, Settings.BOOKS_KEY)
         val deepseekKey = Settings.key(ctx, Settings.DEEPSEEK_KEY)
-        val retry = Processing.forEach(ctx.app.db.books(), Status.OCR_DONE) { book ->
+        val dao = ctx.app.db.books()
+        Log.i(TAG, "lookup pass: ${dao.byStatus(Status.OCR_DONE).size} book(s), deepseek key=${CoverReader.maskKey(deepseekKey)}, " +
+            "books key=${if (booksKey.isBlank()) "absent" else "present"}")
+        val retry = Processing.forEach(dao, Status.OCR_DONE) { book ->
+            val tag = book.id.take(8)
             val lines = book.ocrLinesJson?.let { json.decodeFromString<List<OcrLine>>(it) }.orEmpty()
-            // Null query = none typed by the user: the LLM reads the cover, the OCR is the fallback (SPEC-5).
-            val query = book.query ?: readCover(book, deepseekKey) ?: Matching.buildQuery(lines, noise)
+            val query = chooseQuery(book, lines, noise, deepseekKey, tag)
             // Score against the query too: a title typed by hand (or read by the LLM) must count even when the OCR misread it.
             val reference = listOfNotNull(book.ocrText, query).joinToString("\n")
             val d = BookSearch.search(listOfNotNull(query, Matching.biggestLine(lines, noise)), reference, booksKey)
-            val best = d.ranked.firstOrNull()?.takeIf { d.verdict == Verdict.MATCHED }
+            val top = d.ranked.firstOrNull()
+            Log.i(TAG, "lookup $tag: verdict=${d.verdict} best=${top?.title?.let { "\"$it\"" }} score=${top?.score?.let { "%.2f".format(it) }}")
+            val best = top?.takeIf { d.verdict == Verdict.MATCHED }
             book.copy(
                 status = Status.valueOf(d.verdict.name),
                 query = query,
@@ -135,14 +141,28 @@ class LookupWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
         return if (retry) Result.retry() else Result.success()
     }
 
-    /** Any LLM failure (no key, offline, bad key, quota) falls back to the OCR query instead of blocking the book. */
-    private fun readCover(book: Book, key: String): String? {
-        if (key.isBlank()) return null
-        return try {
-            CoverReader.read(Books.photoFile(applicationContext, book.id).readBytes(), key)
-        } catch (e: Exception) {
-            Log.w("BiblioScan", "cover reading failed for ${book.id}", e)
-            null
+    /**
+     * A query already on the book (typed, or kept from a previous lookup) wins. Otherwise the LLM reads the cover
+     * and the OCR is the fallback (SPEC-5): any LLM failure (no key, offline, bad key, quota) must not block the book.
+     * Every path is logged (SPEC-6 §1).
+     */
+    private fun chooseQuery(book: Book, lines: List<OcrLine>, noise: List<NoiseEntry>, key: String, tag: String): String {
+        book.query?.let {
+            Log.i(TAG, "lookup $tag: query source=kept query=\"$it\"")
+            return it
         }
+        val why = if (key.isBlank()) "no key" else try {
+            CoverReader.read(Books.photoFile(applicationContext, book.id).readBytes(), key, tag)?.let {
+                Log.i(TAG, "lookup $tag: query source=deepseek query=\"$it\"")
+                return it
+            }
+            "no title read"
+        } catch (e: Exception) {
+            Log.w(TAG, "deepseek $tag: failed: $e")
+            "failed"
+        }
+        return Matching.buildQuery(lines, noise).also { Log.i(TAG, "lookup $tag: query source=ocr (deepseek: $why) query=\"$it\"") }
     }
+
+    private companion object { const val TAG = "BiblioScan" }
 }

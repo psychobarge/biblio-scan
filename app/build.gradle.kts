@@ -23,8 +23,8 @@ android {
         minSdk = 28
         targetSdk = 35
         // Obtainium compares versionName with the GitHub release tag (v0.0.2): keep them in sync.
-        versionCode = 2
-        versionName = "0.0.2"
+        versionCode = 3
+        versionName = "0.0.3"
         manifestPlaceholders["appLabel"] = "BiblioScan"
     }
 

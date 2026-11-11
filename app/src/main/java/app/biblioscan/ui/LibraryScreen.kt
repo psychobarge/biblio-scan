@@ -6,9 +6,31 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.animation.core.exponentialDecay
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.AnchoredDraggableState
+import androidx.compose.foundation.gestures.DraggableAnchors
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.anchoredDraggable
+import androidx.compose.foundation.gestures.animateTo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material3.AlertDialog
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -123,6 +145,8 @@ fun LibraryScreen(
     val listState = rememberLazyListState()
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     val fabExpanded by remember { derivedStateOf { listState.firstVisibleItemIndex == 0 } }
+    var openId by remember { mutableStateOf<String?>(null) } // row swiped open on its trash icon (SPEC-6 §3)
+    var toDelete by remember { mutableStateOf<Book?>(null) }
 
     fun io(label: String, block: suspend () -> String) = scope.launch {
         val msg = try {
@@ -264,12 +288,73 @@ fun LibraryScreen(
                 shown.isEmpty() -> EmptyState("Aucun livre ne correspond", null, null, null)
                 else -> LazyColumn(state = listState, contentPadding = PaddingValues(bottom = 96.dp)) {
                     items(shown, key = { it.id }) { book ->
-                        BookRow(book, isDupe = (book.sourceId ?: book.isbn) in dupes, onClick = { onOpen(book.id) })
+                        val open = openId == book.id
+                        SwipeToRevealDelete(
+                            open = open,
+                            onOpenChange = { openId = if (it) book.id else if (open) null else openId },
+                            onDelete = { toDelete = book },
+                        ) {
+                            // An open row closes on tap instead of opening the book.
+                            BookRow(book, isDupe = (book.sourceId ?: book.isbn) in dupes, onClick = { if (open) openId = null else onOpen(book.id) })
+                        }
                         HorizontalDivider()
                     }
                 }
             }
         }
+    }
+
+    // Same dialog as the book screen; cancelling also slides the row back.
+    toDelete?.let { b ->
+        AlertDialog(
+            onDismissRequest = { toDelete = null; openId = null },
+            title = { Text("Supprimer ce livre ?") },
+            text = { Text("La fiche et la photo seront effacées définitivement.") },
+            confirmButton = {
+                TextButton(onClick = { toDelete = null; openId = null; ctx.app.scope.launch { Books.delete(ctx, b.id) } }) { Text("Supprimer") }
+            },
+            dismissButton = { TextButton(onClick = { toDelete = null; openId = null }) { Text("Annuler") } },
+        )
+    }
+}
+
+private enum class Reveal { Closed, Open }
+
+/**
+ * Swipe right-to-left reveals a red trash button; the row stays open until closed (SPEC-6 §3).
+ * Not SwipeToDismissBox: it dismisses the row, while the user must tap the trash and confirm.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SwipeToRevealDelete(open: Boolean, onOpenChange: (Boolean) -> Unit, onDelete: () -> Unit, content: @Composable () -> Unit) {
+    val density = LocalDensity.current
+    val width = 80.dp
+    val state = remember {
+        AnchoredDraggableState(
+            initialValue = Reveal.Closed,
+            positionalThreshold = { it / 2 },
+            velocityThreshold = { with(density) { 125.dp.toPx() } },
+            snapAnimationSpec = tween(),
+            decayAnimationSpec = exponentialDecay(),
+        ).apply { updateAnchors(DraggableAnchors { Reveal.Closed at 0f; Reveal.Open at -with(density) { width.toPx() } }) }
+    }
+    LaunchedEffect(state.currentValue) { onOpenChange(state.currentValue == Reveal.Open) }
+    LaunchedEffect(open) { if (!open && state.currentValue == Reveal.Open) state.animateTo(Reveal.Closed) }
+
+    Box(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Row(Modifier.matchParentSize(), horizontalArrangement = Arrangement.End) {
+            Box(
+                Modifier.width(width).fillMaxHeight().background(MaterialTheme.colorScheme.error).clickable(onClick = onDelete),
+                contentAlignment = Alignment.Center,
+            ) { Icon(Icons.Default.Delete, "Supprimer", tint = MaterialTheme.colorScheme.onError) }
+        }
+        Box(
+            Modifier
+                .offset { IntOffset(state.offset.takeUnless { it.isNaN() }?.roundToInt() ?: 0, 0) }
+                .anchoredDraggable(state, Orientation.Horizontal)
+                .background(MaterialTheme.colorScheme.background)
+                .semantics { customActions = listOf(CustomAccessibilityAction("Supprimer") { onDelete(); true }) },
+        ) { content() }
     }
 }
 

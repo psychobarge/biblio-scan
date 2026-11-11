@@ -12,6 +12,12 @@ class CoverReaderTest {
     @Test fun fencedJsonWithProse() =
         assertEquals("La Curée", CoverReader.parseAnswer("Voici :\n```json\n{\"title\": \"La Curée\", \"author\": null}\n```"))
 
+    @Test fun maskedKeyNeverShowsTheWholeKey() {
+        assertEquals("absent", CoverReader.maskKey(""))
+        assertEquals("absent", CoverReader.maskKey("  "))
+        assertEquals("present (sk-…cdef, 35 chars)", CoverReader.maskKey("sk-" + "0".repeat(28) + "cdef"))
+    }
+
     @Test fun nothingRead() {
         assertNull(CoverReader.parseAnswer("""{"title": null, "author": null}"""))
         assertNull(CoverReader.parseAnswer("Je ne peux pas lire cette image."))

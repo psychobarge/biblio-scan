@@ -1,5 +1,6 @@
 package app.biblioscan.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -39,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -57,6 +59,26 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
     var noise by remember { mutableStateOf(Settings.noise(ctx)) }
     var input by remember { mutableStateOf("") }
     var confirmReset by remember { mutableStateOf(false) }
+    // API keys are edited locally and written only by « Enregistrer » (SPEC-6 §2).
+    var saved by remember { mutableStateOf(Settings.key(ctx, Settings.BOOKS_KEY) to Settings.key(ctx, Settings.DEEPSEEK_KEY)) }
+    var booksKey by remember { mutableStateOf(saved.first) }
+    var deepseekKey by remember { mutableStateOf(saved.second) }
+    val dirty = (booksKey.trim() to deepseekKey.trim()) != saved
+    var confirmLeave by remember { mutableStateOf(false) }
+    val focus = LocalFocusManager.current
+
+    fun saveKeys() {
+        Settings.setKey(ctx, Settings.BOOKS_KEY, booksKey)
+        Settings.setKey(ctx, Settings.DEEPSEEK_KEY, deepseekKey)
+        saved = booksKey.trim() to deepseekKey.trim()
+        booksKey = saved.first
+        deepseekKey = saved.second
+        focus.clearFocus()
+    }
+    fun leave() {
+        if (dirty) confirmLeave = true else onBack()
+    }
+    BackHandler(enabled = dirty) { confirmLeave = true }
 
     fun save(list: List<NoiseEntry>) {
         noise = list
@@ -77,7 +99,7 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
         topBar = {
             TopAppBar(
                 title = { Text("Paramètres") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour") } },
+                navigationIcon = { IconButton(onClick = ::leave) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Retour") } },
             )
         },
     ) { padding ->
@@ -90,8 +112,13 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
                             "Avec une clé DeepSeek, la photo est envoyée à DeepSeek pour lire titre et auteur ; sinon seul l'OCR est utilisé.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    KeyField(Settings.BOOKS_KEY, "Clé Google Books")
-                    KeyField(Settings.DEEPSEEK_KEY, "Clé DeepSeek")
+                    KeyField(booksKey, { booksKey = it }, "Clé Google Books")
+                    KeyField(deepseekKey, { deepseekKey = it }, "Clé DeepSeek")
+                    Button(
+                        onClick = { saveKeys(); scope.launch { snackbar.showSnackbar("Clés enregistrées") } },
+                        enabled = dirty,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Enregistrer") }
                     HorizontalDivider(Modifier.padding(top = 8.dp))
                 }
             }
@@ -157,16 +184,28 @@ fun SettingsScreen(snackbar: SnackbarHostState, onBack: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = { confirmReset = false }) { Text("Annuler") } },
     )
+
+    if (confirmLeave) AlertDialog(
+        onDismissRequest = { confirmLeave = false },
+        title = { Text("Enregistrer les clés ?") },
+        text = { Text("Vos modifications des clés API ne sont pas enregistrées.") },
+        confirmButton = {
+            TextButton(onClick = { confirmLeave = false; saveKeys(); onBack() }) { Text("Enregistrer") }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { confirmLeave = false }) { Text("Annuler") }
+                TextButton(onClick = { confirmLeave = false; onBack() }) { Text("Ignorer") }
+            }
+        },
+    )
 }
 
-/** Saved on every keystroke: the next lookup pass reads it. */
 @Composable
-private fun KeyField(name: String, label: String) {
-    val ctx = LocalContext.current
-    var value by remember { mutableStateOf(Settings.key(ctx, name)) }
+private fun KeyField(value: String, onValueChange: (String) -> Unit, label: String) {
     OutlinedTextField(
         value = value,
-        onValueChange = { value = it; Settings.setKey(ctx, name, it) },
+        onValueChange = onValueChange,
         label = { Text(label) },
         singleLine = true,
         visualTransformation = PasswordVisualTransformation(),
