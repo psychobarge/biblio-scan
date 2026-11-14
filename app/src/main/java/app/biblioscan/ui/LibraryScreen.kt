@@ -69,22 +69,26 @@ import app.biblioscan.match.Matching
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-enum class Sort(val label: String) { ADDED("Date d'ajout"), TITLE("Titre"), AUTHOR("Auteur") }
+enum class Sort(val label: String) { ADDED("Date d'ajout"), TITLE("Titre"), AUTHOR("Auteur"), SERIES("Collection") }
 
 /**
  * Without search: validated books of the scope. With a search: every book, validated or not, whatever
- * the scope (SPEC-7 §3.3), accent/case-insensitive on title + authors. Missing title/author sorts last.
+ * the scope (SPEC-7 §3.3), accent/case-insensitive on title + authors + series. Missing title/author sorts last.
+ * [Sort.SERIES] keeps each series together in volume order, books outside a series last.
  */
 fun arrange(books: List<Book>, search: String, sort: Sort, scope: String = Places.ALL, places: List<Place> = emptyList()): List<Book> {
     val q = Matching.normalize(search)
     val byId = places.associateBy { it.id }
     val found = if (q.isEmpty()) books.filter { it.status == Status.CONFIRMED && Places.inScope(it.placeId, scope, byId) }
-    else books.filter { Matching.normalize("${it.title} ${it.authors}").contains(q) }
+    else books.filter { Matching.normalize("${it.title} ${it.authors} ${it.series}").contains(q) }
     fun key(s: String?) = s?.let(Matching::normalize)?.ifBlank { null }
     return when (sort) {
         Sort.ADDED -> found.sortedByDescending { it.createdAt }
         Sort.TITLE -> found.sortedWith(compareBy(nullsLast()) { key(it.title) })
         Sort.AUTHOR -> found.sortedWith(compareBy(nullsLast()) { key(it.authors?.substringBefore(';')) })
+        Sort.SERIES -> found.sortedWith(
+            compareBy<Book, String?>(nullsLast()) { key(it.series) }.thenBy(nullsLast()) { it.volume }.thenBy(nullsLast()) { key(it.title) },
+        )
     }
 }
 
@@ -97,6 +101,13 @@ fun rowPlace(b: Book, scope: String, byId: Map<String, Place>, searching: Boolea
         scope == p.parentId -> p.name
         else -> null
     }
+}
+
+/** Header of each group in [Sort.SERIES]: one label per normalized series (its first spelling), so case/accent variants share a group. */
+fun seriesGroups(books: List<Book>): (Book) -> String {
+    fun key(b: Book) = b.series?.let(Matching::normalize)?.ifBlank { null }
+    val label = books.filter { key(it) != null }.reversed().associate { key(it)!! to it.series!!.trim() }
+    return { b -> key(b)?.let(label::get) ?: "Hors collection" }
 }
 
 fun prefs(ctx: Context) = ctx.getSharedPreferences("ui", Context.MODE_PRIVATE)
@@ -266,6 +277,7 @@ fun LibraryScreen(
                     books = shown, dupes = dupesOf(books), selected = selected, onSelect = { selected = it }, onOpen = onOpen, state = listState,
                     place = { rowPlace(it, where, byId, searching) },
                     selectable = { it.status == Status.CONFIRMED }, // moving is for library books only
+                    group = if (sort == Sort.SERIES) seriesGroups(shown) else null,
                 )
             }
         }

@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -43,6 +44,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
@@ -78,6 +80,7 @@ import app.biblioscan.data.Book
 import app.biblioscan.data.Books
 import app.biblioscan.data.Places
 import app.biblioscan.data.Status
+import app.biblioscan.match.Matching
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -100,7 +103,8 @@ suspend fun whereLabel(ctx: android.content.Context, scope: String): String =
 
 /**
  * Book list shared by the library and « À valider »: swipe to delete (SPEC-6 §3) and long press to select (SPEC-7 §3.5).
- * [selectable] says which rows may join a selection; [place] is the location line of a row.
+ * [selectable] says which rows may join a selection; [place] is the location line of a row;
+ * [group] puts a header above each run of rows with the same label.
  */
 @Composable
 fun BookList(
@@ -112,6 +116,7 @@ fun BookList(
     state: LazyListState,
     place: (Book) -> String? = { null },
     selectable: (Book) -> Boolean = { true },
+    group: ((Book) -> String)? = null,
 ) {
     val ctx = LocalContext.current
     var openId by remember { mutableStateOf<String?>(null) } // row swiped open on its trash icon
@@ -120,7 +125,15 @@ fun BookList(
     fun toggle(b: Book) { if (selectable(b)) onSelect(if (b.id in selected) selected - b.id else selected + b.id) }
 
     LazyColumn(state = state, contentPadding = PaddingValues(bottom = 96.dp)) {
-        items(books, key = { it.id }) { book ->
+        books.forEachIndexed { i, book ->
+            val header = group?.invoke(book)
+            if (header != null && (i == 0 || group(books[i - 1]) != header)) item(key = "header:$header") {
+                Text(
+                    header, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+            }
+            item(key = book.id) {
             val open = openId == book.id
             SwipeToRevealDelete(
                 open = open,
@@ -139,6 +152,7 @@ fun BookList(
                 )
             }
             HorizontalDivider()
+            }
         }
     }
 
@@ -157,7 +171,7 @@ fun BookList(
 }
 
 /**
- * Contextual top bar of a selection (SPEC-8 §2.5): select all, then move — or validate in « À valider » —, then delete.
+ * Contextual top bar of a selection (SPEC-8 §2.5): select all, then move and set the series — or validate in « À valider » —, then delete.
  * Owns its place sheet, its dialog and the back handler that leaves the selection.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -167,6 +181,7 @@ fun SelectionBar(selected: Set<String>, books: List<Book>, snackbar: SnackbarHos
     val dao = ctx.app.db.books()
     var sheet by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
+    var seriesDialog by remember { mutableStateOf(false) }
     BackHandler { onSelect(emptySet()) }
     TopAppBar(
         title = { Text("${selected.size} sélectionné${if (selected.size > 1) "s" else ""}") },
@@ -174,7 +189,10 @@ fun SelectionBar(selected: Set<String>, books: List<Book>, snackbar: SnackbarHos
         actions = {
             IconButton(onClick = { onSelect(all()) }) { Icon(painterResource(R.drawable.ic_select_all), "Tout sélectionner") }
             if (validate) IconButton(onClick = { sheet = true }) { Icon(Icons.Default.Check, "Valider et ranger") }
-            else IconButton(onClick = { sheet = true }) { Icon(Icons.Default.Place, "Déplacer") }
+            else {
+                IconButton(onClick = { sheet = true }) { Icon(Icons.Default.Place, "Déplacer") }
+                IconButton(onClick = { seriesDialog = true }) { Icon(Icons.AutoMirrored.Filled.List, "Mettre dans une collection") }
+            }
             IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Supprimer") }
         },
     )
@@ -204,6 +222,25 @@ fun SelectionBar(selected: Set<String>, books: List<Book>, snackbar: SnackbarHos
         },
         onDismiss = { sheet = false },
     )
+
+    if (seriesDialog) {
+        val chosen = books.filter { it.id in selected }
+        SeriesDialog(
+            initial = chosen.map { it.series }.distinct().singleOrNull().orEmpty(),
+            existing = books.mapNotNull { it.series?.trim()?.ifBlank { null } }.distinctBy(Matching::normalize).sortedBy(Matching::normalize),
+            onDismiss = { seriesDialog = false },
+            onSave = { name ->
+                seriesDialog = false
+                onSelect(emptySet())
+                ctx.app.scope.launch(Dispatchers.Main) {
+                    dao.setSeries(chosen.map { it.id }, name)
+                    val n = chosen.size
+                    val msg = if (name == null) "${plural(n, "livre")} retiré${if (n > 1) "s" else ""} de leur collection" else "${plural(n, "livre")} dans « $name »"
+                    snackbar.undoable(msg) { dao.update(chosen) }
+                }
+            },
+        )
+    }
 
     if (confirmDelete) AlertDialog(
         onDismissRequest = { confirmDelete = false },
@@ -308,6 +345,12 @@ private fun BookRow(book: Book, isDupe: Boolean, place: String?, selected: Boole
                 Text(book.title ?: "Livre sans titre", style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
             book.authors?.let { Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+            book.series?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it.trim() + (book.volume?.let { v -> " · tome $v" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall, fontStyle = FontStyle.Italic, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
             place?.let {
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Place, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -321,4 +364,25 @@ private fun BookRow(book: Book, isDupe: Boolean, place: String?, selected: Boole
             }
         }
     }
+}
+
+/** Series for a selection: free text, with the library's existing series as suggestions so spellings stay consistent. Empty = no series. */
+@Composable
+private fun SeriesDialog(initial: String, existing: List<String>, onDismiss: () -> Unit, onSave: (String?) -> Unit) {
+    var name by remember { mutableStateOf(initial) }
+    val q = Matching.normalize(name)
+    val suggestions = existing.filter { Matching.normalize(it).contains(q) && Matching.normalize(it) != q }.take(5)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Collection") },
+        text = {
+            Column {
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Nom de la collection") }, singleLine = true)
+                suggestions.forEach { TextButton(onClick = { name = it }) { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } }
+                Text("Laisser vide pour retirer les livres de leur collection.", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(onClick = { onSave(name.trim().ifBlank { null }) }) { Text("Enregistrer") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Annuler") } },
+    )
 }

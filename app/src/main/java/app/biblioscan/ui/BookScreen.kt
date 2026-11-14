@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -68,6 +69,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -202,6 +204,15 @@ fun BookScreen(route: BookRoute, snackbar: SnackbarHostState, onBack: () -> Unit
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(edited.year.orEmpty(), { edited = edited.copy(year = it) }, Modifier.weight(1f), label = { Text("Année") })
                 OutlinedTextField(edited.isbn.orEmpty(), { edited = edited.copy(isbn = it) }, Modifier.weight(2f), label = { Text("ISBN") })
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(edited.series.orEmpty(), { edited = edited.copy(series = it.ifBlank { null }) }, Modifier.weight(3f), label = { Text("Collection / série") })
+                OutlinedTextField(
+                    edited.volume?.toString().orEmpty(),
+                    { t -> if (t.isEmpty() || t.all(Char::isDigit)) edited = edited.copy(volume = t.take(4).toIntOrNull()) },
+                    Modifier.weight(1f), label = { Text("Tome") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
             }
             // Typed fields are saved first, so a search that finds nothing keeps them.
             OutlinedButton(

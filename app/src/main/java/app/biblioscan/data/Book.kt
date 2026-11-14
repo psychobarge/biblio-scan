@@ -32,4 +32,7 @@ data class Book(
     val candidatesJson: String? = null,
     // Room or spot (SPEC-7); null = « Non rangé ». Only meaningful once CONFIRMED.
     val placeId: String? = null,
+    // Series (« Le Seigneur des anneaux ») and volume in it; typed by the user, grouped case/accent-insensitively.
+    val series: String? = null,
+    val volume: Int? = null,
 )

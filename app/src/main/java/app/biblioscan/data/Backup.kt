@@ -94,12 +94,12 @@ object Backup {
         val byId = ctx.app.db.places().snapshot().associateBy { it.id }
         fun cell(s: String?) = "\"" + s.orEmpty().replace("\"", "\"\"") + "\""
         val csv = buildString {
-            appendLine("titre,auteurs,editeur,annee,isbn,statut,piece,emplacement")
+            appendLine("titre,auteurs,editeur,annee,isbn,statut,piece,emplacement,collection,tome")
             books.forEach { b ->
                 val p = b.placeId?.let(byId::get)
                 val room = p?.parentId?.let(byId::get) ?: p
                 val spot = p?.takeIf { it.parentId != null }
-                appendLine(listOf(b.title, b.authors, b.publisher, b.year, b.isbn, b.status.name, room?.name, spot?.name).joinToString(",") { cell(it) })
+                appendLine(listOf(b.title, b.authors, b.publisher, b.year, b.isbn, b.status.name, room?.name, spot?.name, b.series, b.volume?.toString()).joinToString(",") { cell(it) })
             }
         }
         val out = ctx.contentResolver.openOutputStream(uri) ?: error("impossible d'écrire le fichier")

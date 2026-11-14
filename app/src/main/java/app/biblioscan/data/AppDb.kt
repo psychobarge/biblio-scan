@@ -53,6 +53,9 @@ interface BookDao {
     @Query("UPDATE Book SET placeId = :placeId WHERE id IN (:ids)")
     suspend fun moveTo(ids: List<String>, placeId: String?)
 
+    @Query("UPDATE Book SET series = :series WHERE id IN (:ids)")
+    suspend fun setSeries(ids: List<String>, series: String?)
+
     /** Bulk validation (SPEC-7 §4.3): only sure matches; returns how many were validated. */
     @Query("UPDATE Book SET status = 'CONFIRMED', placeId = :placeId, lastError = NULL, coverUrl = NULL WHERE id IN (:ids) AND status = 'MATCHED'")
     suspend fun validate(ids: List<String>, placeId: String?): Int
@@ -62,7 +65,7 @@ interface BookDao {
 }
 
 // Never use fallbackToDestructiveMigration: schema changes need real migrations (SPEC §4).
-@Database(entities = [Book::class, Place::class], version = 2, autoMigrations = [AutoMigration(from = 1, to = 2)])
+@Database(entities = [Book::class, Place::class], version = 3, autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)])
 abstract class AppDb : RoomDatabase() {
     abstract fun books(): BookDao
     abstract fun places(): PlaceDao
